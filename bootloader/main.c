@@ -309,7 +309,18 @@ int main(void)
 {
     /* Before anything else: from here on, any hang -- in the
        bootloader or in the application -- causes a reset. */
-    iwdg_freeze_on_debug();     /* otherwise a breakpoint resets the board */
+#ifdef DEBUG_BUILD
+    /* Debug builds only.
+     *
+     * shared/iwdg.h states the rule plainly: freezing the counter under
+     * the debugger is a development convenience and must not ship,
+     * because it also masks a genuine hang reached through the debug
+     * interface. Calling it unconditionally -- which this code did --
+     * broke that rule in the same repository that documents it.
+     *
+     * Enable with:  make DEBUG=1 */
+    iwdg_freeze_on_debug();
+#endif
     iwdg_start(IWDG_TIMEOUT_MS);
 
     /* The last reset cause is read before being cleared: it tells a

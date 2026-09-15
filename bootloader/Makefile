@@ -22,6 +22,12 @@ CFLAGS += -ffreestanding
 CFLAGS += -ffunction-sections -fdata-sections
 CFLAGS += -I../shared
 
+# make DEBUG=1 freezes the watchdog while the core is halted so that
+# breakpoints do not reset the board. Never enable for a shipped image.
+ifeq ($(DEBUG),1)
+CFLAGS += -DDEBUG_BUILD
+endif
+
 # ---------- Linker options ----------
 LDFLAGS  = $(CPU) $(FPU)
 LDFLAGS += -T linker.ld
