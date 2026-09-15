@@ -1,6 +1,6 @@
 .syntax unified
 .cpu cortex-m4
-.fpu softvfp
+.fpu fpv4-sp-d16
 .thumb
 
 /* =========================================================
@@ -17,7 +17,32 @@ Reset_Handler:
           any means other than a reset. */
     ldr   sp, =_estack
 
-    /* 2. Copy .data from FLASH to RAM.
+    /* 2. Enable the FPU.
+          The Cortex-M4F leaves CP10/CP11 disabled out of reset. This
+          image is built with -mfloat-abi=hard, so the compiler is
+          free to emit VFP instructions and to pass floats in VFP
+          registers; the first such instruction executed with the
+          coprocessor disabled raises a UsageFault (NOCP).
+
+          No float appears in either image today, so the omission was
+          invisible -- the build worked because nothing exercised it,
+          not because it was correct. In a bootloader that failure
+          mode is expensive: the fault lands in Default_Handler, the
+          watchdog resets the board, boot_fail_count advances, and a
+          perfectly good image is rolled back three boots later for a
+          reason nothing reports.
+
+          CPACR is at 0xE000ED88; bits 23:20 grant full access to
+          CP11 and CP10. DSB then ISB because the effect must be in
+          place before the next instruction is fetched. */
+    ldr   r0, =0xE000ED88
+    ldr   r1, [r0]
+    orr   r1, r1, #(0xF << 20)
+    str   r1, [r0]
+    dsb
+    isb
+
+    /* 3. Copy .data from FLASH to RAM.
           Initial values of global variables are stored in flash;
           their execution location is in RAM. */
     movs  r1, #0
@@ -36,7 +61,7 @@ LoopCopyDataInit:
     cmp   r2, r3
     bcc   CopyDataInit
 
-    /* 3. Zero-fill .bss.
+    /* 4. Zero-fill .bss.
           The C standard guarantees that uninitialised globals are
           zero at startup. */
     ldr   r2, =_sbss
@@ -51,7 +76,7 @@ LoopFillZerobss:
     cmp   r2, r3
     bcc   FillZerobss
 
-    /* 4. Call main() */
+    /* 5. Call main() */
     bl    main
 
     /* main() must never return in an embedded system */
