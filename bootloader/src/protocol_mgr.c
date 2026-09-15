@@ -549,7 +549,27 @@ void protocol_poll(uint32_t now_ms)
     uint8_t byte;
     int received = 0;
 
-    while (uart_getc(&byte)) {
+    /* Bounded drain.
+     *
+     * This loop used to run until the buffer emptied, with the
+     * watchdog refresh sitting outside it in update_mode(). It
+     * terminates only because the CPU consumes bytes faster than
+     * 115200 baud delivers them -- a statement about relative speeds,
+     * not a property of the code, and one that stops being true the
+     * moment the clock changes or the link speeds up.
+     *
+     * app/main.c's trigger poll already bounds its own drain and says
+     * in as many words that the loop's exit should not depend on the
+     * CPU outpacing the line. The same standard belongs here, in the
+     * loop that actually matters.
+     *
+     * One bufferful is the natural bound: no more than that can be
+     * pending, so a full pass still drains everything available, and
+     * the caller reaches iwdg_feed() every iteration no matter what
+     * the host does. */
+    uint32_t budget = UART_RX_BUFFER_SIZE;
+
+    while (budget-- > 0U && uart_getc(&byte)) {
         feed(byte);
         received = 1;
     }
