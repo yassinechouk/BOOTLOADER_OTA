@@ -108,6 +108,36 @@ static void flash_lock(void)
     FLASH_CR |= CR_LOCK;
 }
 
+/*
+ * The bootloader's own pages are refused outright.
+ *
+ * This driver is linked into BOTH images. In the application that
+ * means a stray pointer, a bad slot index, or a plain bug can present
+ * 0x08000000 to flash_erase_page() and destroy the one component whose
+ * purpose is to remain able to recover the device. The range check
+ * that used to be here accepted it: anything inside the 1 MB part was
+ * in bounds.
+ *
+ * Nothing in either image has a legitimate reason to write below
+ * BOOTLOADER_ADDR + BOOTLOADER_SIZE. The bootloader updates slots and
+ * metadata; the application updates metadata. Neither rewrites the
+ * bootloader, so refusing the whole region costs nothing and removes
+ * the failure mode.
+ *
+ * This is a software interlock, not a security boundary -- code that
+ * pokes FLASH_CR directly still can. The hardware answer is the WRP
+ * option bytes, deliberately not programmed from firmware here:
+ * getting them wrong is not recoverable over the serial link, which is
+ * the only link a deployed board has.
+ */
+static int address_is_bootloader(uint32_t address, uint32_t len)
+{
+    uint32_t bl_end = BOOTLOADER_ADDR + BOOTLOADER_SIZE;
+
+    /* Any overlap at all, not just a start inside the region. */
+    return (address < bl_end) && ((address + len) > BOOTLOADER_ADDR);
+}
+
 static int address_in_flash(uint32_t address, uint32_t len)
 {
     if (address < FLASH_BASE_ADDR) {
@@ -118,6 +148,9 @@ static int address_in_flash(uint32_t address, uint32_t len)
     }
     if (address + len < address) {
         return 0;               /* arithmetic overflow */
+    }
+    if (address_is_bootloader(address, len)) {
+        return 0;
     }
     return 1;
 }
