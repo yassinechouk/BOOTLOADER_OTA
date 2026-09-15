@@ -102,6 +102,14 @@
 #define OTA_TRIGGER_BYTE            'U'
 #define OTA_CONFIRM_POLLS           4
 
+/* Units of work one main-loop pass owes before the watchdog is
+   refreshed. See the accumulator in main() for why each is derived
+   from observed hardware state rather than from reaching a line. */
+#define WORK_BLINK                  (1U << 0)
+#define WORK_REPORT                 (1U << 1)
+#define WORK_TRIGGER                (1U << 2)
+#define WORK_ALL                    (WORK_BLINK | WORK_REPORT | WORK_TRIGGER)
+
 
 /* ----------------------------------------------------------------
  * Minimal UART
@@ -436,30 +444,77 @@ int main(void)
     uart_dec(CYCLES_BEFORE_CONFIRMATION);
     uart_puts("\r\n\r\n");
 
-    uint32_t cycle = 0;
-    uint32_t last_cycle_seen = 0;
-    int confirmed = 0;
+    uint32_t cycle     = 0;
+    int      confirmed = 0;
+    uint32_t led_before;
 
     while (1) {
+        /* Evidence accumulator for this pass.
+         *
+         * The previous version refreshed the watchdog on
+         * `cycle != last_cycle_seen`, with `cycle` incremented on the
+         * line above -- a condition that could never be false. It was
+         * iwdg_feed() in a health check's clothing, and it defeated
+         * the entire reason iwdg_feed_if() exists.
+         *
+         * Each unit of work the cycle owes now sets its own bit, and
+         * the refresh happens only if all of them did. What makes this
+         * falsifiable rather than decorative is that the bits come
+         * from OBSERVED hardware state, not from having reached a
+         * line: the blink bit is read back out of ODR, and the report
+         * bit comes from the USART's TC flag, which only sets once the
+         * last stop bit is physically on the wire.
+         *
+         * So an edit that returns early, a GPIO clock that gets gated
+         * off, or a USART that stops shifting all withhold the refresh
+         * and the watchdog resets the board -- which is exactly the
+         * rollback path this application exists to exercise. */
+        uint32_t work = 0;
+
+        led_before = (GPIOA_ODR >> LED_PIN) & 1U;
         GPIOA_ODR ^= (1U << LED_PIN);
+        if (((GPIOA_ODR >> LED_PIN) & 1U) != led_before) {
+            work |= WORK_BLINK;
+        }
+
         delay(300000);
 
         cycle++;
-
-        /* Conditional refresh: the watchdog is only reassured if the
-           cycle counter has genuinely advanced since the last pass.
-           The criterion is trivial here, but the shape is the right
-           one -- under an RTOS a supervisor task would check in the
-           same way that every other task has made progress. */
-        iwdg_feed_if(cycle != last_cycle_seen);
-        last_cycle_seen = cycle;
 
         uart_puts("cycle ");
         uart_dec(cycle);
         uart_puts("\r\n");
 
-        /* OTA trigger. Confirmed over several polls before it is
-           acted on -- see the section above. The host side is
+        /* Evidence that the report physically left the USART.
+         *
+         * TC cannot be sampled immediately: uart_putc() waits on TXE,
+         * and writing TDR CLEARS TC. Right after the last character is
+         * handed over, TC is always clear and only sets one character
+         * time later, when the final stop bit is on the wire. Testing
+         * it without waiting is a check that can never pass.
+         *
+         * So wait for it, but under a bound. The bound is what keeps
+         * this a health check rather than a blocking call that always
+         * succeeds eventually: a USART whose clock has been gated off
+         * or whose shift register has stalled never sets TC, the
+         * budget expires, the bit stays clear and the refresh is
+         * withheld.
+         *
+         * The budget only has to be comfortably longer than one
+         * character: 87 us at 115200 baud is roughly 350 core cycles
+         * at 4 MHz, so this is two orders of magnitude of headroom.
+         * Unlike a delay loop, its exact duration does not matter --
+         * only that it is finite. */
+        uint32_t tc_budget = 50000U;
+        while (tc_budget-- > 0U) {
+            if (USART2_ISR & (1U << 6)) {   /* TC */
+                work |= WORK_REPORT;
+                break;
+            }
+        }
+
+        /* OTA trigger. Confirmed over several polls before it is acted
+           on -- see the section above. The host side is
            tools/ota_flash.py --via-uart, which simply holds the line
            down for long enough. */
         if (ota_trigger_poll()) {
@@ -467,6 +522,7 @@ int main(void)
             boot_request_set();
             software_reset();
         }
+        work |= WORK_TRIGGER;
 
         /* Confirmation only happens after several complete cycles.
            Confirming on the first line of main() would validate an
@@ -477,5 +533,8 @@ int main(void)
             uart_puts("\r\n");
             confirmed = 1;
         }
+
+        /* Refresh last, once the evidence is in. */
+        iwdg_feed_if(work == WORK_ALL);
     }
 }
