@@ -7,7 +7,10 @@ SIZE    = arm-none-eabi-size
 TARGET  = bootloader
 
 # ---------- Source files ----------
-SRCS = main.c startup.s src/crc.c src/flash.c src/metadata_mgr.c src/uart.c src/protocol_mgr.c src/systick.c src/iwdg.c
+SRCS = main.c startup.s \
+       ../drivers/crc.c ../drivers/flash.c ../drivers/metadata_mgr.c ../drivers/iwdg.c \
+       src/uart.c src/protocol_mgr.c src/systick.c
+
 # ---------- Compilation options ----------
 CPU     = -mcpu=cortex-m4 -mthumb
 FPU     = -mfpu=fpv4-sp-d16 -mfloat-abi=hard
