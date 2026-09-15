@@ -31,7 +31,47 @@ int metadata_is_valid(const metadata_t *meta)
     uint32_t computed = crc32_compute((const uint8_t *)meta,
                                      META_CRC_COVERAGE);
 
-    return (computed == meta->meta_crc32);
+    if (computed != meta->meta_crc32) {
+        return 0;
+    }
+
+    /* Structural integrity is not the same as meaning.
+     *
+     * Everything above proves only that these bytes are the bytes that
+     * were written. It says nothing about whether they were sane when
+     * they were written -- a firmware bug, a half-finished migration
+     * to a different slot count, or a future version of this structure
+     * would all produce a record with a correct CRC and a field this
+     * code cannot act on.
+     *
+     * That matters more here than it would elsewhere, because these
+     * fields are used as array indices and as addresses:
+     *
+     *   meta->slot[active]  with active > 1 reads past a 48-byte
+     *                       object -- out of bounds, silently
+     *   SLOT_ADDR(s)        is (s == SLOT_A ? A : B), so anything that
+     *                       is not 0 becomes "slot B" instead of being
+     *                       rejected
+     *   1U - active         underflows for active > 1
+     *
+     * A bootloader's job is to stay recoverable when persistent state
+     * is wrong. Rejecting the record costs one boot into update mode;
+     * accepting it costs undefined behaviour in the code that decides
+     * what to execute. */
+    if (meta->active_slot > SLOT_B) {
+        return 0;
+    }
+
+    for (unsigned s = 0; s < 2U; s++) {
+        if (meta->slot[s].state > STATE_VALID) {
+            return 0;
+        }
+        if (meta->slot[s].size > SLOT_SIZE) {
+            return 0;
+        }
+    }
+
+    return 1;
 }
 
 
