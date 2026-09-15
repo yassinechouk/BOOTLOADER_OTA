@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include "uart.h"
+#include "board.h"
 
 /* ----------------------------------------------------------------
  * Addresses -- RM0351 section 2.2.2
@@ -46,8 +47,7 @@
 #define ICR_NECF            (1U << 2)
 #define ICR_ORECF           (1U << 3)
 
-/* Default system clock: MSI at 4 MHz after reset */
-#define SYSTEM_CLOCK_HZ     4000000UL
+/* System clock and BRR derivation live in shared/board.h. */
 
 /* USART2 sits at position 38 in the vector table.
    NVIC_ISER1 covers interrupts 32 to 63, hence the shift. */
@@ -103,10 +103,10 @@ void uart_init(uint32_t baudrate)
     USART2_CR1 = 0;
     USART2_CR3 = 0;
 
-    /* Oversampling by 16 (default): BRR = f_ck / baudrate.
-       At 4 MHz and 115200 baud, this gives 34, yielding 117647 baud
-       actual -- 2.1% error, within UART tolerance. */
-    USART2_BRR = SYSTEM_CLOCK_HZ / baudrate;
+    /* Oversampling by 16 (OVER8 = 0): BRR = USARTDIV = f_CK / baud,
+       rounded rather than truncated -- see USART_BRR_OVER16() in
+       shared/board.h for why the difference matters at this clock. */
+    USART2_BRR = USART_BRR_OVER16(SYSTEM_CLOCK_HZ, baudrate);
 
     rx_head = 0;
     rx_tail = 0;

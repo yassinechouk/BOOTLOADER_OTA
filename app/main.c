@@ -6,6 +6,7 @@
 #include "metadata_mgr.h"
 #include "iwdg.h"
 #include "boot_request.h"
+#include "board.h"
 
 /*
  * Application -- demonstrates the update lifecycle.
@@ -88,6 +89,9 @@
 
 #define LED_PIN             5
 
+/* Must match the rate the bootloader and the host tools use. */
+#define APP_UART_BAUD       115200UL
+
 /* Application cycles required before declaring the image healthy. */
 #define CYCLES_BEFORE_CONFIRMATION   3
 
@@ -118,7 +122,7 @@ static void uart_init(void)
     GPIOA_AFRL  &= ~((0xFU << 8) | (0xFU << 12));
     GPIOA_AFRL  |=  ((7U << 8)   | (7U << 12));
 
-    USART2_BRR = 4000000UL / 115200UL;
+    USART2_BRR = USART_BRR_OVER16(SYSTEM_CLOCK_HZ, APP_UART_BAUD);
     USART2_CR1 = (1U << 3) | (1U << 2) | (1U << 0);   /* TE | RE | UE */
 
     /* Clear the inherited error flags and drop whatever byte is still

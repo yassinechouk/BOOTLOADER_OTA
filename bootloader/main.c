@@ -10,6 +10,7 @@
 #include "protocol.h"
 #include "protocol_mgr.h"
 #include "boot_request.h"
+#include "board.h"
 
 /*
  * Bootloader -- entry point.
@@ -89,7 +90,6 @@
 
 #define BOOT_WAIT_MS        2000U    /* listen window after reset      */
 #define OTA_WAIT_MS         30000U   /* listen window after a request  */
-#define MSI_DEFAULT_HZ      4000000UL
 
 #define SCB_VTOR            (*(volatile uint32_t *)0xE000ED08UL)
 
@@ -308,7 +308,7 @@ int main(void)
     int reset_by_watchdog = iwdg_caused_last_reset();
     iwdg_clear_reset_flags();
 
-    systick_init(MSI_DEFAULT_HZ);
+    systick_init(SYSTEM_CLOCK_HZ);
     uart_init(115200);
     crc32_init();
     protocol_init();
