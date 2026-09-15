@@ -7,6 +7,7 @@
 #include "iwdg.h"
 #include "boot_request.h"
 #include "board.h"
+#include "fault.h"
 
 /*
  * Application -- demonstrates the update lifecycle.
@@ -176,6 +177,14 @@ static void uart_dec(uint32_t v)
     while (n-- > 0) {
         uart_putc(tmp[n]);
     }
+}
+
+/* drivers/fault.c reports through this. The application's TX path is
+   already blocking and register-level, which is what a fault context
+   requires. */
+void fault_putc(char c)
+{
+    uart_putc(c);
 }
 
 static void delay(volatile uint32_t n)

@@ -8,7 +8,7 @@ TARGET  = bootloader
 
 # ---------- Source files ----------
 SRCS = main.c startup.s \
-       ../drivers/crc.c ../drivers/flash.c ../drivers/metadata_mgr.c ../drivers/iwdg.c \
+       ../drivers/crc.c ../drivers/flash.c ../drivers/metadata_mgr.c ../drivers/iwdg.c ../drivers/fault.c \
        src/uart.c src/protocol_mgr.c src/systick.c
 
 # ---------- Compilation options ----------

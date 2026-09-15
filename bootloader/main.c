@@ -11,6 +11,7 @@
 #include "protocol_mgr.h"
 #include "boot_request.h"
 #include "board.h"
+#include "fault.h"
 
 /*
  * Bootloader -- entry point.
@@ -104,6 +105,14 @@
 #define NVIC_ICER1          (*(volatile uint32_t *)0xE000E184UL)
 #define NVIC_ICPR0          (*(volatile uint32_t *)0xE000E280UL)
 #define NVIC_ICPR1          (*(volatile uint32_t *)0xE000E284UL)
+
+
+/* Fault reporting writes through the blocking TX path deliberately:
+   the interrupt-driven receive side may be exactly what failed. */
+void fault_putc(char c)
+{
+    uart_putc(c);
+}
 
 
 /* ----------------------------------------------------------------

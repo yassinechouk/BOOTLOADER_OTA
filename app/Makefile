@@ -16,7 +16,7 @@ OBJCOPY = arm-none-eabi-objcopy
 SIZE    = arm-none-eabi-size
 
 SRCS    = main.c startup.s \
-          ../drivers/crc.c ../drivers/flash.c ../drivers/metadata_mgr.c ../drivers/iwdg.c
+          ../drivers/crc.c ../drivers/flash.c ../drivers/metadata_mgr.c ../drivers/iwdg.c ../drivers/fault.c
 
 CPU     = -mcpu=cortex-m4 -mthumb
 FPU     = -mfpu=fpv4-sp-d16 -mfloat-abi=hard
