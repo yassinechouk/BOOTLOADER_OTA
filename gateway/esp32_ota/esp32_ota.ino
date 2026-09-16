@@ -328,6 +328,7 @@ static bool exchange(uint8_t cmd, uint16_t seq,
 uint8_t *firmware      = nullptr;
 size_t   firmwareLen   = 0;
 bool     transferBusy  = false;
+uint8_t  targetSlot    = 0xFF;
 
 /* ---------------------------------------------------------------- */
 /* The transfer itself                                               */
@@ -337,31 +338,12 @@ static bool runTransfer()
 {
   Frame reply;
 
-  /* --- 1. ask the board what it wants --- */
-  logAdd("GET_INFO");
-  if (!exchange(CMD_GET_INFO, 0, nullptr, 0, reply)) {
-    logAdd("no answer — is the board in update mode?");
-    return false;
-  }
-  if (reply.cmd != RSP_INFO || reply.len != 12) {
-    logAdd("unexpected reply to GET_INFO");
+  if (targetSlot == 0xFF) {
+    logAdd("no target slot prepared");
     return false;
   }
 
-  uint8_t protoVer = reply.data[8];
-  uint8_t active   = reply.data[9];
-  uint8_t freeSlot = reply.data[10];
-  uint8_t state    = reply.data[11];
-
-  logAdd("board: proto v" + String(protoVer) +
-         "  active slot " + String((char)('A' + active)) +
-         "  free slot "   + String((char)('A' + freeSlot)) +
-         "  state "       + String(state));
-
-  if (protoVer != PROTO_VERSION) {
-    logAdd("protocol mismatch");
-    return false;
-  }
+  uint8_t freeSlot = targetSlot;
 
   /* --- 2. pad to the flash write unit --- */
   size_t len = firmwareLen;
@@ -455,83 +437,56 @@ static bool runTransfer()
 
 WebServer server(80);
 
-const char PAGE[] PROGMEM = R"HTML(
-<!DOCTYPE html>
-<html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>STM32 OTA gateway</title>
-<style>
- body{font-family:system-ui,sans-serif;margin:0;padding:16px;
-      background:#1e1e2e;color:#cdd6f4}
- h1{font-size:18px;margin:0 0 4px}
- .sub{color:#6c7086;font-size:13px;margin-bottom:16px}
- #log{background:#11111b;border:1px solid #313244;border-radius:6px;
-      padding:12px;height:55vh;overflow-y:auto;white-space:pre-wrap;
-      font-family:ui-monospace,monospace;font-size:13px;line-height:1.5}
- .row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center}
- button{padding:10px 18px;border-radius:6px;border:0;background:#89b4fa;
-        color:#1e1e2e;font-weight:600;cursor:pointer}
- button:disabled{background:#45475a;color:#6c7086;cursor:default}
- input[type=file]{color:#cdd6f4}
- .stat{color:#6c7086;font-size:13px}
-</style></head><body>
-<h1>STM32 OTA gateway</h1>
-<div class="sub">WiFi &rarr; ESP32-S3 &rarr; USART1 &rarr; STM32L476RG</div>
-
-<div id="log">connecting...</div>
-
-<div class="row">
-  <input type="file" id="file" accept=".bin">
-  <button onclick="upload()" id="up">Upload</button>
-  <button onclick="flash()" id="fl" disabled>Send to STM32</button>
-  <span class="stat" id="stat"></span>
-</div>
-
-<script>
-let haveImage = false;
-
-async function refresh(){
-  try{
-    const r = await fetch('/log');
-    const el = document.getElementById('log');
-    const bottom = el.scrollHeight-el.scrollTop-el.clientHeight < 40;
-    el.textContent = await r.text();
-    if(bottom) el.scrollTop = el.scrollHeight;
-  }catch(e){}
-}
-
-async function upload(){
-  const f = document.getElementById('file').files[0];
-  if(!f){ alert('choose a .bin first'); return; }
-  document.getElementById('up').disabled = true;
-  const fd = new FormData(); fd.append('f', f);
-  try{
-    const r = await fetch('/upload', {method:'POST', body:fd});
-    const t = await r.text();
-    document.getElementById('stat').textContent = t;
-    haveImage = r.ok;
-    document.getElementById('fl').disabled = !haveImage;
-  }catch(e){
-    document.getElementById('stat').textContent = 'upload failed';
+void handlePrepare()
+{
+  if (transferBusy) {
+    server.send(409, "text/plain", "transfer running");
+    return;
   }
-  document.getElementById('up').disabled = false;
-  refresh();
+  
+  targetSlot = 0xFF;
+  Frame reply;
+
+  logAdd("triggering OTA reset...");
+  uint32_t tReset = millis();
+  while (millis() - tReset < 3000) {  /* 3 s — guarantees 4+ polls at 75 ms/cycle */
+    Serial1.write('U');
+    delay(5);
+  }
+  delay(1500); /* wait for the STM32 to fully reboot into the bootloader */
+  while (Serial1.available()) Serial1.read();
+
+  logAdd("GET_INFO");
+  if (!exchange(CMD_GET_INFO, 0, nullptr, 0, reply)) {
+    logAdd("no answer — is the board in update mode?");
+    server.send(500, "text/plain", "no answer");
+    return;
+  }
+  if (reply.cmd != RSP_INFO || reply.len != 12) {
+    logAdd("unexpected reply to GET_INFO");
+    server.send(500, "text/plain", "unexpected reply");
+    return;
+  }
+
+  uint8_t protoVer = reply.data[8];
+  uint8_t active   = reply.data[9];
+  uint8_t freeSlot = reply.data[10];
+  uint8_t state    = reply.data[11];
+
+  logAdd("board: proto v" + String(protoVer) +
+         "  active slot " + String((char)('A' + active)) +
+         "  free slot "   + String((char)('A' + freeSlot)) +
+         "  state "       + String(state));
+
+  if (protoVer != PROTO_VERSION) {
+    logAdd("protocol mismatch");
+    server.send(500, "text/plain", "protocol mismatch");
+    return;
+  }
+
+  targetSlot = freeSlot;
+  server.send(200, "text/plain", String((char)('A' + freeSlot)));
 }
-
-async function flash(){
-  document.getElementById('fl').disabled = true;
-  await fetch('/flash');
-  refresh();
-  // transfer runs in the main loop; re-enable once it reports done
-  setTimeout(()=>{document.getElementById('fl').disabled=false;}, 20000);
-}
-
-setInterval(refresh, 500);
-refresh();
-</script></body></html>
-)HTML";
-
-void handleRoot() { server.send_P(200, "text/html", PAGE); }
 void handleLog()  { server.send(200, "text/plain", logAsText()); }
 
 void handleUploadDone()
@@ -604,7 +559,7 @@ void setup()
   WiFi.softAP(AP_SSID, AP_PASSWORD);
   IPAddress ip = WiFi.softAPIP();
 
-  server.on("/",       HTTP_GET,  handleRoot);
+  server.on("/prepare", HTTP_GET,  handlePrepare);
   server.on("/log",    HTTP_GET,  handleLog);
   server.on("/flash",  HTTP_GET,  handleFlash);
   server.on("/upload", HTTP_POST, handleUploadDone, handleUploadData);
