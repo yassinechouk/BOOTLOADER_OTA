@@ -74,10 +74,19 @@
 
 #define RCC_AHB2ENR         (*(volatile uint32_t *)(RCC_BASE + 0x4C))
 #define RCC_APB1ENR1        (*(volatile uint32_t *)(RCC_BASE + 0x58))
+#define RCC_APB2ENR         (*(volatile uint32_t *)(RCC_BASE + 0x60))
 
 #define GPIOA_MODER         (*(volatile uint32_t *)(GPIOA_BASE + 0x00))
 #define GPIOA_ODR           (*(volatile uint32_t *)(GPIOA_BASE + 0x14))
 #define GPIOA_AFRL          (*(volatile uint32_t *)(GPIOA_BASE + 0x20))
+#define GPIOA_AFRH          (*(volatile uint32_t *)(GPIOA_BASE + 0x24))
+
+#define USART1_BASE         0x40013800UL
+#define USART1_CR1          (*(volatile uint32_t *)(USART1_BASE + 0x00))
+#define USART1_BRR          (*(volatile uint32_t *)(USART1_BASE + 0x0C))
+#define USART1_ISR          (*(volatile uint32_t *)(USART1_BASE + 0x1C))
+#define USART1_ICR          (*(volatile uint32_t *)(USART1_BASE + 0x20))
+#define USART1_RDR          (*(volatile uint32_t *)(USART1_BASE + 0x24))
 
 #define USART2_CR1          (*(volatile uint32_t *)(USART2_BASE + 0x00))
 #define USART2_BRR          (*(volatile uint32_t *)(USART2_BASE + 0x0C))
@@ -124,28 +133,28 @@
 static void uart_init(void)
 {
     RCC_AHB2ENR  |= (1U << 0);
-    RCC_APB1ENR1 |= (1U << 17);
+    RCC_APB1ENR1 |= (1U << 17);  /* USART2 clock */
+    RCC_APB2ENR  |= (1U << 14);  /* USART1 clock */
 
-    GPIOA_MODER &= ~((3U << 4) | (3U << 6));
-    GPIOA_MODER |=  ((2U << 4) | (2U << 6));
+    /* Configure PA2/PA3 for USART2 (debug) and PA9/PA10 for USART1 (ESP32) */
+    GPIOA_MODER &= ~((3U << 4) | (3U << 6) | (3U << 18) | (3U << 20));
+    GPIOA_MODER |=  ((2U << 4) | (2U << 6) | (2U << 18) | (2U << 20));
     GPIOA_AFRL  &= ~((0xFU << 8) | (0xFU << 12));
     GPIOA_AFRL  |=  ((7U << 8)   | (7U << 12));
+    GPIOA_AFRH  &= ~((0xFU << 4) | (0xFU << 8));
+    GPIOA_AFRH  |=  ((7U << 4)   | (7U << 8));
 
+    /* USART2 - Debug logs */
     USART2_BRR = USART_BRR_OVER16(SYSTEM_CLOCK_HZ, APP_UART_BAUD);
     USART2_CR1 = (1U << 3) | (1U << 2) | (1U << 0);   /* TE | RE | UE */
-
-    /* Clear the inherited error flags and drop whatever byte is still
-       sitting in RDR.
-
-       The bootloader gates the USART2 clock off before jumping, but
-       gating a clock does not reset a peripheral: its status flags
-       cross the handover intact. And the bootloader has just been
-       receiving protocol frames at full rate, so ORE is more likely
-       set than not. Left alone it would make the receive path deaf
-       from the application's first instant -- and a stale byte in RDR
-       would be read as if the host had just sent it. */
     USART2_ICR = (1U << 0) | (1U << 1) | (1U << 2) | (1U << 3);
     (void)USART2_RDR;
+
+    /* USART1 - ESP32 OTA trigger */
+    USART1_BRR = USART_BRR_OVER16(SYSTEM_CLOCK_HZ, APP_UART_BAUD);
+    USART1_CR1 = (1U << 3) | (1U << 2) | (1U << 0);   /* TE | RE | UE */
+    USART1_ICR = (1U << 0) | (1U << 1) | (1U << 2) | (1U << 3);
+    (void)USART1_RDR;
 }
 
 static void uart_putc(char c)
@@ -218,12 +227,12 @@ static void delay(volatile uint32_t n)
  * does not happen. */
 static int uart_getc(uint8_t *c)
 {
-    if (USART2_ISR & (1U << 3)) {       /* ORE */
-        USART2_ICR = (1U << 3);
+    if (USART1_ISR & (1U << 3)) {       /* ORE */
+        USART1_ICR = (1U << 3);
     }
 
-    if (USART2_ISR & (1U << 5)) {       /* RXNE */
-        *c = (uint8_t)(USART2_RDR & 0xFFU);
+    if (USART1_ISR & (1U << 5)) {       /* RXNE */
+        *c = (uint8_t)(USART1_RDR & 0xFFU);
         return 1;
     }
 
