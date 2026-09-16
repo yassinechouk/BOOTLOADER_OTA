@@ -20,6 +20,10 @@ Failure threshold reached, rolling back → slot A
 
 ---
 
+![System Architecture](docs/arch_diagram.jpg)
+
+---
+
 ## Features
 
 - **Three update paths**: SWD (ST-Link), UART trigger, or **Wi-Fi via ESP32 gateway**
@@ -70,6 +74,8 @@ working at all.
             │   METADATA B     │    2 KB
 0x08100000  └──────────────────┘
 ```
+
+![Flash Memory Layout](docs/memory_layout.jpg)
 
 Each slot is independent: it has its own size, CRC32, version, and state
 (`EMPTY` / `IN_PROGRESS` / `TESTING` / `VALID`). Rollback is a single field
