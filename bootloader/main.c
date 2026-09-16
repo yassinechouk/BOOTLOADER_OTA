@@ -111,7 +111,7 @@
    the interrupt-driven receive side may be exactly what failed. */
 void fault_putc(char c)
 {
-    uart_putc(c);
+    uart_putc(&uart_debug, c);
 }
 
 
@@ -122,11 +122,11 @@ void fault_putc(char c)
 static void log_state(uint8_t s)
 {
     switch (s) {
-    case STATE_EMPTY:       uart_puts("EMPTY");       break;
-    case STATE_IN_PROGRESS: uart_puts("IN_PROGRESS"); break;
-    case STATE_TESTING:     uart_puts("TESTING");     break;
-    case STATE_VALID:       uart_puts("VALID");       break;
-    default:                uart_hex8(s);             break;
+    case STATE_EMPTY:       uart_puts(&uart_debug, "EMPTY");       break;
+    case STATE_IN_PROGRESS: uart_puts(&uart_debug, "IN_PROGRESS"); break;
+    case STATE_TESTING:     uart_puts(&uart_debug, "TESTING");     break;
+    case STATE_VALID:       uart_puts(&uart_debug, "VALID");       break;
+    default:                uart_hex8(&uart_debug, s);             break;
     }
 }
 
@@ -171,10 +171,10 @@ static void jump_to_application(uint32_t base)
     uint32_t app_sp    = *(volatile uint32_t *)base;
     uint32_t app_reset = *(volatile uint32_t *)(base + 4U);
 
-    uart_puts("\r\nJumping to ");
-    uart_hex32(base);
-    uart_puts("\r\n\r\n");
-    uart_flush();
+    uart_puts(&uart_debug, "\r\nJumping to ");
+    uart_hex32(&uart_debug, base);
+    uart_puts(&uart_debug, "\r\n\r\n");
+    uart_flush(&uart_debug);
 
     /* Final refresh: the application then gets the full timeout to
        initialise and reach its own first refresh. */
@@ -255,13 +255,13 @@ static int image_is_intact(const metadata_t *meta, uint8_t slot)
 
 static void update_mode(uint32_t limit_ms)
 {
-    uart_puts("Update mode");
+    uart_puts(&uart_debug, "Update mode");
     if (limit_ms > 0U) {
-        uart_puts(" (");
-        uart_dec(limit_ms);
-        uart_puts(" ms)");
+        uart_puts(&uart_debug, " (");
+        uart_dec(&uart_debug, limit_ms);
+        uart_puts(&uart_debug, " ms)");
     }
-    uart_puts("\r\n");
+    uart_puts(&uart_debug, "\r\n");
 
     uint32_t start = millis();
 
@@ -276,8 +276,8 @@ static void update_mode(uint32_t limit_ms)
         protocol_poll(now);
 
         if (protocol_update_complete()) {
-            uart_puts("\r\nUpdate complete, restarting\r\n");
-            uart_flush();
+            uart_puts(&uart_debug, "\r\nUpdate complete, restarting\r\n");
+            uart_flush(&uart_debug);
             delay_ms(50);
 
             /* Software reset via AIRCR. Starting over guarantees a
@@ -329,7 +329,8 @@ int main(void)
     iwdg_clear_reset_flags();
 
     systick_init(SYSTEM_CLOCK_HZ);
-    uart_init(115200);
+    uart_debug_init(115200);
+    uart_proto_init(115200);
     crc32_init();
     protocol_init();
 
@@ -362,61 +363,61 @@ int main(void)
         listen_ms   = OTA_WAIT_MS;
     }
 
-    uart_puts("\r\n\r\n========================================\r\n");
-    uart_puts("  BOOTLOADER v");
-    uart_dec((BOOTLOADER_VERSION >> 16) & 0xFFU);
-    uart_putc('.');
-    uart_dec((BOOTLOADER_VERSION >> 8) & 0xFFU);
-    uart_putc('.');
-    uart_dec(BOOTLOADER_VERSION & 0xFFU);
-    uart_puts("\r\n========================================\r\n");
+    uart_puts(&uart_debug, "\r\n\r\n========================================\r\n");
+    uart_puts(&uart_debug, "  BOOTLOADER v");
+    uart_dec(&uart_debug, (BOOTLOADER_VERSION >> 16) & 0xFFU);
+    uart_putc(&uart_debug, '.');
+    uart_dec(&uart_debug, (BOOTLOADER_VERSION >> 8) & 0xFFU);
+    uart_putc(&uart_debug, '.');
+    uart_dec(&uart_debug, BOOTLOADER_VERSION & 0xFFU);
+    uart_puts(&uart_debug, "\r\n========================================\r\n");
 
     if (reset_by_watchdog) {
-        uart_puts("Reset caused by the watchdog\r\n");
+        uart_puts(&uart_debug, "Reset caused by the watchdog\r\n");
     }
 
     if (ota_request) {
         /* The host script waits for this line before starting the
            transfer. Not seeing it means the flag was ignored -- an
            older bootloader, whose stack still reaches the flag word. */
-        uart_puts("OTA request accepted, listening for ");
-        uart_dec(OTA_WAIT_MS / 1000U);
-        uart_puts(" s\r\n");
+        uart_puts(&uart_debug, "OTA request accepted, listening for ");
+        uart_dec(&uart_debug, OTA_WAIT_MS / 1000U);
+        uart_puts(&uart_debug, " s\r\n");
     }
 
     metadata_t meta;
 
     if (!metadata_read(&meta)) {
-        uart_puts("No valid metadata\r\n");
+        uart_puts(&uart_debug, "No valid metadata\r\n");
         update_mode(0);             /* wait indefinitely */
         while (1) { }
     }
 
     uint8_t active = meta.active_slot;
 
-    uart_puts("Active slot : ");
-    uart_putc((char)('A' + active));
-    uart_puts("\r\nState       : ");
+    uart_puts(&uart_debug, "Active slot : ");
+    uart_putc(&uart_debug, (char)('A' + active));
+    uart_puts(&uart_debug, "\r\nState       : ");
     log_state(meta.slot[active].state);
-    uart_puts("\r\nSize        : ");
-    uart_dec(meta.slot[active].size);
-    uart_puts(" bytes\r\nVersion     : ");
-    uart_hex32(meta.slot[active].version);
-    uart_puts("\r\nBoot fails  : ");
-    uart_dec(meta.boot_fail_count);
-    uart_puts("\r\n");
+    uart_puts(&uart_debug, "\r\nSize        : ");
+    uart_dec(&uart_debug, meta.slot[active].size);
+    uart_puts(&uart_debug, " bytes\r\nVersion     : ");
+    uart_hex32(&uart_debug, meta.slot[active].version);
+    uart_puts(&uart_debug, "\r\nBoot fails  : ");
+    uart_dec(&uart_debug, meta.boot_fail_count);
+    uart_puts(&uart_debug, "\r\n");
 
     /* The other slot is shown too: it is the fallback in case of
        rollback, and knowing what it holds avoids discovering too late
        that it is empty. */
     uint8_t other_slot = OTHER_SLOT(active);
-    uart_puts("Fallback    : slot ");
-    uart_putc((char)('A' + other_slot));
-    uart_puts(", ");
+    uart_puts(&uart_debug, "Fallback    : slot ");
+    uart_putc(&uart_debug, (char)('A' + other_slot));
+    uart_puts(&uart_debug, ", ");
     log_state(meta.slot[other_slot].state);
-    uart_puts(", ");
-    uart_dec(meta.slot[other_slot].size);
-    uart_puts(" bytes\r\n\r\n");
+    uart_puts(&uart_debug, ", ");
+    uart_dec(&uart_debug, meta.slot[other_slot].size);
+    uart_puts(&uart_debug, " bytes\r\n\r\n");
 
     switch (meta.slot[active].state) {
 
@@ -425,14 +426,14 @@ int main(void)
             update_mode(listen_ms);      /* give the host a chance */
             jump_to_application(SLOT_ADDR(active));
         }
-        uart_puts("Image invalid despite VALID state\r\n");
+        uart_puts(&uart_debug, "Image invalid despite VALID state\r\n");
         break;
 
     case STATE_TESTING:
         if (meta.boot_fail_count >= MAX_BOOT_FAILURES) {
             /* The application never confirmed itself. Fall back to
                the previous slot. */
-            uart_puts("Failure threshold reached, rolling back\r\n");
+            uart_puts(&uart_debug, "Failure threshold reached, rolling back\r\n");
 
             uint8_t other = OTHER_SLOT(active);
 
@@ -441,7 +442,7 @@ int main(void)
                worse than continuing to retry. */
             if (meta.slot[other].state == STATE_EMPTY ||
                 !image_is_intact(&meta, other)) {
-                uart_puts("No usable fallback image\r\n");
+                uart_puts(&uart_debug, "No usable fallback image\r\n");
                 break;
             }
 
@@ -455,12 +456,12 @@ int main(void)
 
             if (metadata_write(&previous) == META_OK &&
                 slot_looks_bootable(SLOT_ADDR(other))) {
-                uart_puts("Falling back to slot ");
-                uart_putc((char)('A' + other));
-                uart_puts("\r\n");
+                uart_puts(&uart_debug, "Falling back to slot ");
+                uart_putc(&uart_debug, (char)('A' + other));
+                uart_puts(&uart_debug, "\r\n");
                 jump_to_application(SLOT_ADDR(other));
             }
-            uart_puts("No usable fallback image\r\n");
+            uart_puts(&uart_debug, "No usable fallback image\r\n");
             break;
         }
 
@@ -473,25 +474,25 @@ int main(void)
             attempt.boot_fail_count = (uint8_t)(meta.boot_fail_count + 1U);
             metadata_write(&attempt);
 
-            uart_puts("Attempt ");
-            uart_dec(attempt.boot_fail_count);
-            uart_putc('/');
-            uart_dec(MAX_BOOT_FAILURES);
-            uart_puts("\r\n");
+            uart_puts(&uart_debug, "Attempt ");
+            uart_dec(&uart_debug, attempt.boot_fail_count);
+            uart_putc(&uart_debug, '/');
+            uart_dec(&uart_debug, MAX_BOOT_FAILURES);
+            uart_puts(&uart_debug, "\r\n");
 
             update_mode(listen_ms);
             jump_to_application(SLOT_ADDR(active));
         }
-        uart_puts("Image under test is invalid\r\n");
+        uart_puts(&uart_debug, "Image under test is invalid\r\n");
         break;
 
     case STATE_IN_PROGRESS:
-        uart_puts("Interrupted transfer detected\r\n");
+        uart_puts(&uart_debug, "Interrupted transfer detected\r\n");
         break;
 
     case STATE_EMPTY:
     default:
-        uart_puts("No firmware installed\r\n");
+        uart_puts(&uart_debug, "No firmware installed\r\n");
         break;
     }
 

@@ -4,101 +4,132 @@
 #include <stdint.h>
 
 /*
- * USART2 driver -- polling TX, interrupt-driven RX.
+ * USART driver — one implementation, several instances.
  *
- * On the Nucleo-L476RG, USART2 is connected to the ST-LINK
- * virtual COM port via PA2 (TX) and PA3 (RX), with solder bridges
- * SB13/SB14 closed at the factory. No wiring is required.
+ * The board now carries two independent serial links:
  *
- * Why interrupt-driven reception
- * --------------------------------
- * At 115200 baud, one byte arrives every ~87 us. A 256-byte flash
- * write takes a few hundred us, a page erase roughly twenty ms --
- * enough to miss over two hundred bytes if the CPU polled the
- * register in a loop.
+ *   uart_debug  USART2 on PA2/PA3, wired to the ST-LINK by solder
+ *               bridges SB13/SB14. Diagnostic output only.
  *
- * The protocol operates in strict request-response mode: the PC
- * does not transmit while the bootloader is writing. But this
- * guarantee relies on the sender's discipline. A timeout expiring
- * at the wrong moment, a poorly timed retransmission, and bytes
- * would be lost. A bootloader must not depend on its peer's
- * good behavior.
+ *   uart_proto  USART1 on PA9/PA10, brought out on the ST morpho
+ *               connector. Carries the update protocol, now to an
+ *               ESP32 acting as a WiFi gateway.
  *
- * The ISR simply stores the byte in a circular buffer:
- * a few microseconds, well within the 87 us interval.
+ * Why two rather than one
+ * -----------------------
+ * Moving the protocol to USART1 and dropping USART2 would have been
+ * simpler, and it would have cost the only direct window into the
+ * bootloader. Debugging the gateway would then mean reading the
+ * bootloader's output through the gateway being debugged.
  *
- * Lock-free circular buffer
- * --------------------------
- * Two indices, head and tail. The ISR writes head and reads tail;
- * the main context writes tail and reads head. Each index has a
- * single writer, eliminating any race condition without needing a
- * critical section.
+ * Keeping both separates the channels: the protocol runs over the
+ * link under test, while diagnostics keep flowing to a console that
+ * does not depend on it.
  *
- * One slot is sacrificed to distinguish a full buffer from an
- * empty one: head == tail means empty, (head + 1) % size == tail
- * means full. The alternative -- an element counter -- would be
- * written by both contexts and would require disabling interrupts
- * on every access.
+ * Why an instance struct rather than two modules
+ * ----------------------------------------------
+ * A second copy of uart.c with renamed symbols would have avoided
+ * touching any caller, at the cost of two files sharing ninety
+ * percent of their content — exactly the duplication the drivers/
+ * refactor removed elsewhere. A ring buffer fix would have to be
+ * applied twice, and the day one copy is forgotten the two links
+ * behave differently for reasons nobody remembers.
  *
- * The size is a power of two: modulo becomes a bit mask, one
- * instruction instead of a division costing a dozen cycles, in
- * code called on every byte.
+ * The state that differs between instances is small: a base address,
+ * a buffer, four counters. Putting it in a struct writes the logic
+ * once and makes a third port a declaration rather than a file.
  *
- * Overflow
- * --------
- * A byte arriving on a full buffer is DROPPED, not substituted for
- * the oldest. In a CRC-verified frame protocol, dropping the new
- * byte corrupts the current frame: the CRC detects it and the PC
- * retransmits. Overwriting the oldest would corrupt a frame
- * already received and potentially being processed.
+ * Asymmetric instances
+ * --------------------
+ * uart_debug is transmit-only. It has no receive buffer, no receive
+ * interrupt, and RE is never set.
  *
- * The event is counted, not signalled: a non-zero counter at the
- * end of a transfer indicates an undersized buffer or processing
- * that is too slow -- information that would otherwise be invisible.
+ * Giving it a 512-byte buffer and an ISR "for symmetry" would spend
+ * RAM and interrupt latency on a capability nothing uses, and would
+ * add a source of spurious interrupts on a floating pin. Instances
+ * are allowed to differ; the struct carries a NULL buffer and the
+ * code treats that as "transmit only".
  *
- * NOT REENTRANT on TX: uart_puts() must not be called from an
- * interrupt while it is executing in the main context.
+ * Interrupt dispatch
+ * ------------------
+ * The NVIC calls USART1_IRQHandler and USART2_IRQHandler, neither of
+ * which takes an argument. An ISR cannot discover which instance it
+ * serves, so the handler body is written once and two thin wrappers
+ * supply the context the hardware does not.
  */
 
-#define UART_RX_BUFFER_SIZE     512U    /* must be a power of two */
+/* Must be a power of two: the modulo then reduces to a bit mask, one
+   instruction instead of a division, in code that runs per byte. */
+#define UART_RX_BUFFER_SIZE     512U
 
-/* Initialises the clock, PA2/PA3 pins, baud rate and interrupt. */
-void uart_init(uint32_t baudrate);
 
-/* --- Transmission (polling) --- */
-void uart_putc(char c);
-void uart_puts(const char *s);
-void uart_write(const uint8_t *data, uint32_t len);
+typedef struct {
+    volatile uint32_t *base;        /* peripheral base address        */
 
-/* Waits for the actual end of transmission (TC flag).
-   Must be called before cutting the USART clock or jumping to the
-   application, otherwise the last character would be truncated. */
-void uart_flush(void);
+    /* NULL on a transmit-only instance. */
+    volatile uint8_t  *rx_buf;
+    uint32_t           rx_mask;     /* size - 1, size being a power of two */
 
-/* --- Formatting helpers, useful for diagnostics --- */
-void uart_hex32(uint32_t v);
-void uart_hex8(uint8_t v);
-void uart_dec(uint32_t v);
+    /* head is written only by the ISR, tail only by the main context.
+       No variable is written by both, which is what removes the need
+       for a critical section: on Cortex-M an aligned 32-bit store is
+       atomic. One slot is sacrificed so that head == tail can mean
+       empty unambiguously — the alternative, an element count, would
+       be written by both sides. */
+    volatile uint32_t  rx_head;
+    volatile uint32_t  rx_tail;
 
-/* --- Reception (interrupt + circular buffer) --- */
+    volatile uint32_t  cnt_overrun_sw;
+    volatile uint32_t  cnt_overrun_hw;
+    volatile uint32_t  cnt_framing;
+    volatile uint32_t  cnt_noise;
+} uart_t;
 
-/* Number of available bytes. */
-uint32_t uart_available(void);
 
-/* Removes one byte from the buffer. Returns 1 if a byte was present. */
-int uart_getc(uint8_t *out);
+extern uart_t uart_debug;       /* USART2 -> ST-LINK, TX only        */
+extern uart_t uart_proto;       /* USART1 -> ESP32, full duplex      */
 
-/* Removes up to max bytes. Returns the number actually read. */
-uint32_t uart_read(uint8_t *dest, uint32_t max);
 
-/* Flushes the buffer. Useful for resynchronising after an error. */
-void uart_rx_flush(void);
+/* --- Initialisation -------------------------------------------- */
 
-/* --- Diagnostics --- */
-uint32_t uart_overrun_count(void);      /* software buffer full      */
-uint32_t uart_hw_overrun_count(void);   /* USART ORE flag            */
-uint32_t uart_framing_error_count(void);/* FE flag                   */
-uint32_t uart_noise_error_count(void);  /* NE flag                   */
-void     uart_reset_counters(void);
+/* Each sets up its own clock domain and pins, then shares the rest.
+   USART1 lives on APB2, USART2 on APB1 — enabling the wrong one
+   leaves the peripheral clock-gated and its register writes are
+   discarded with no error at all. */
+void uart_debug_init(uint32_t baudrate);
+void uart_proto_init(uint32_t baudrate);
+
+/* --- Transmission ---------------------------------------------- */
+
+void uart_putc(uart_t *u, char c);
+void uart_puts(uart_t *u, const char *s);
+void uart_write(uart_t *u, const uint8_t *data, uint32_t len);
+
+/* Waits for the transmission to actually finish (TC), not merely for
+   the register to free up (TXE). Required before cutting the clock or
+   jumping away, or the last character is truncated mid-frame. */
+void uart_flush(uart_t *u);
+
+/* --- Formatting ------------------------------------------------- */
+
+void uart_hex32(uart_t *u, uint32_t v);
+void uart_hex8(uart_t *u, uint8_t v);
+void uart_dec(uart_t *u, uint32_t v);
+
+/* --- Reception -------------------------------------------------- */
+/* All return 0 on a transmit-only instance. */
+
+uint32_t uart_available(uart_t *u);
+int      uart_getc(uart_t *u, uint8_t *out);
+uint32_t uart_read(uart_t *u, uint8_t *dest, uint32_t max);
+void     uart_rx_flush(uart_t *u);
+
+/* --- Diagnostics ------------------------------------------------ */
+
+uint32_t uart_overrun_count(uart_t *u);       /* software buffer full */
+uint32_t uart_hw_overrun_count(uart_t *u);    /* USART ORE flag       */
+uint32_t uart_framing_error_count(uart_t *u); /* FE flag              */
+uint32_t uart_noise_error_count(uart_t *u);   /* NE flag              */
+void     uart_reset_counters(uart_t *u);
 
 #endif /* UART_H */

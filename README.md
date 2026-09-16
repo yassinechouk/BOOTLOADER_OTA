@@ -37,9 +37,10 @@ Failure threshold reached, rolling back → slot A
 | Item | Notes |
 |---|---|
 | NUCLEO-L476RG | Cortex-M4F · 1 MB flash (2 × 512 KB banks) · 128 KB RAM |
-| Mini-USB cable | Powers the board, carries SWD and the virtual COM port |
+| ESP32-S3 | Acts as a WiFi OTA gateway (web server to UART bridge) |
+| Mini-USB / USB-C | Powers the boards, carries SWD and the virtual COM port |
 
-No extra wiring. UART reaches the host through the on-board ST-LINK.
+No extra wiring for the ST-LINK. The ESP32 requires three wires to the STM32: GND, RX (ESP32 IO18 ← STM32 PA9), and TX (ESP32 IO17 → STM32 PA10).
 
 ---
 
@@ -113,19 +114,22 @@ cd app
 make flashA     # programs app_slotA.elf into slot A via SWD
 ```
 
-### 5 — Update firmware over UART
+### 5 — Update firmware over WiFi (ESP32 Gateway)
 
-From this point forward, no SWD access is needed. A single command triggers
-the update, transfers the binary, and verifies it:
+From this point forward, no SWD access is needed. The project includes an ESP32-S3 gateway (`gateway/esp32_ota/esp32_ota.ino`) that provides a web interface for wireless updates.
 
-```bash
-python3 tools/ota_flash.py
-```
+1. Flash the ESP32 sketch using the Arduino IDE.
+2. Connect to the `STM32-OTA` WiFi network (password: `bootloader`).
+3. Navigate to `http://192.168.4.1` in your browser.
+4. Upload the compiled `app_slotA.bin` or `app_slotB.bin` and click **Send to STM32**.
 
-The host queries the board for the free slot, sends the matching binary, and
+The ESP32 queries the board for the free slot, sends the matching binary, and
 the bootloader marks it `TESTING`. On the next boot the application must
 confirm itself by writing `VALID`; if it doesn't, the watchdog resets the board
 and the bootloader rolls back.
+
+> **USB-only alternative:** You can still update over a direct USB-UART connection
+> using the provided Python scripts: `python3 tools/ota_flash.py`
 
 ---
 
@@ -369,8 +373,12 @@ partition table). Rollback then reduces to a single field write — `active_slot
 │   ├── linker.ld       32 KB at 0x08000000
 │   └── src/
 │       ├── protocol_mgr.c   frame assembly and command dispatch
-│       ├── uart.c           interrupt-driven RX, ring buffer
+│       ├── uart.c           interrupt-driven RX, ring buffer (USART1 + USART2)
 │       └── systick.c        millisecond time base
+│
+├── gateway/
+│   └── esp32_ota/
+│       └── esp32_ota.ino    ESP32 WiFi web server that transfers firmware to the STM32
 │
 ├── app/
 │   ├── main.c          demo application with self-confirmation logic

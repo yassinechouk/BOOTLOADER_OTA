@@ -78,11 +78,11 @@ static void send_frame(uint8_t cmd, uint16_t seq,
     trailer[2] = (uint8_t)((crc >> 16) & 0xFFU);
     trailer[3] = (uint8_t)((crc >> 24) & 0xFFU);
 
-    uart_write(header, FRAME_HEADER_SIZE);
+    uart_write(&uart_proto, header, FRAME_HEADER_SIZE);
     if (len > 0U && data != 0) {
-        uart_write(data, len);
+        uart_write(&uart_proto, data, len);
     }
-    uart_write(trailer, FRAME_CRC_SIZE);
+    uart_write(&uart_proto, trailer, FRAME_CRC_SIZE);
 }
 
 
@@ -370,7 +370,7 @@ static void on_end_update(uint16_t seq)
     }
 
     send_ack(seq);
-    uart_flush();
+    uart_flush(&uart_proto);
 
     state = PROTO_COMPLETE;
 }
@@ -569,7 +569,7 @@ void protocol_poll(uint32_t now_ms)
      * the host does. */
     uint32_t budget = UART_RX_BUFFER_SIZE;
 
-    while (budget-- > 0U && uart_getc(&byte)) {
+    while (budget-- > 0U && uart_getc(&uart_proto, &byte)) {
         feed(byte);
         received = 1;
     }
