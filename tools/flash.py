@@ -165,12 +165,12 @@ def trigger_ota(tr) -> bool:
     for attempt in range(5):
         try:
             read_info(tr)
-            ok("bootloader is listening")
+            success("bootloader is listening")
             return True
         except (TransportError, Timeout):
             time.sleep(0.5)
 
-    err("the application never handed over")
+    failure("the application never handed over")
     info("is it running its main loop? was it already in the bootloader?")
     return False
 
