@@ -3,7 +3,7 @@
 #include "board.h"
 
 /* ----------------------------------------------------------------
- * Addresses — RM0351 section 2.2.2
+ * Addresses -- RM0351 section 2.2.2
  * ---------------------------------------------------------------- */
 #define RCC_BASE            0x40021000UL
 #define GPIOA_BASE          0x48000000UL
@@ -146,7 +146,7 @@ void uart_proto_init(uint32_t baudrate)
     /* PA9 = TX, PA10 = RX, alternate function 7.
        These pins are above 7, so the alternate function goes in AFRH
        with a shift of (pin - 8) * 4. Using AFRL here would silently
-       configure PA1 and PA2 instead — and PA2 belongs to the debug
+       configure PA1 and PA2 instead -- and PA2 belongs to the debug
        link, so the symptom would appear on the wrong channel. */
     GPIOA_MODER &= ~((3U << (9 * 2)) | (3U << (10 * 2)));
     GPIOA_MODER |=  ((2U << (9 * 2)) | (2U << (10 * 2)));
@@ -184,7 +184,7 @@ static void uart_isr(uart_t *u)
      * ORE is the one that matters: until it is cleared explicitly the
      * USART STOPS RECEIVING. A driver that ignores it goes deaf after
      * the first overrun with no symptom beyond frames going
-     * unanswered — which looks exactly like a wiring fault. */
+     * unanswered -- which looks exactly like a wiring fault. */
     if (status & (ISR_ORE | ISR_FE | ISR_NE | ISR_PE)) {
 
         if (status & ISR_ORE) {
@@ -218,7 +218,7 @@ static void uart_isr(uart_t *u)
         if (next == u->rx_tail) {
             /* Buffer full: drop the incoming byte rather than
                overwrite the oldest. In a framed, CRC-checked protocol
-               dropping the new byte corrupts the frame in flight —
+               dropping the new byte corrupts the frame in flight --
                the CRC catches it and the host retransmits. Overwriting
                would corrupt a frame already complete and possibly
                being processed. */

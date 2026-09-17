@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 /*
- * USART driver — one implementation, several instances.
+ * USART driver -- one implementation, several instances.
  *
  * The board now carries two independent serial links:
  *
@@ -30,7 +30,7 @@
  * ----------------------------------------------
  * A second copy of uart.c with renamed symbols would have avoided
  * touching any caller, at the cost of two files sharing ninety
- * percent of their content — exactly the duplication the drivers/
+ * percent of their content -- exactly the duplication the drivers/
  * refactor removed elsewhere. A ring buffer fix would have to be
  * applied twice, and the day one copy is forgotten the two links
  * behave differently for reasons nobody remembers.
@@ -74,7 +74,7 @@ typedef struct {
        No variable is written by both, which is what removes the need
        for a critical section: on Cortex-M an aligned 32-bit store is
        atomic. One slot is sacrificed so that head == tail can mean
-       empty unambiguously — the alternative, an element count, would
+       empty unambiguously -- the alternative, an element count, would
        be written by both sides. */
     volatile uint32_t  rx_head;
     volatile uint32_t  rx_tail;
@@ -93,7 +93,7 @@ extern uart_t uart_proto;       /* USART1 -> ESP32, full duplex      */
 /* --- Initialisation -------------------------------------------- */
 
 /* Each sets up its own clock domain and pins, then shares the rest.
-   USART1 lives on APB2, USART2 on APB1 — enabling the wrong one
+   USART1 lives on APB2, USART2 on APB1 -- enabling the wrong one
    leaves the peripheral clock-gated and its register writes are
    discarded with no error at all. */
 void uart_debug_init(uint32_t baudrate);
