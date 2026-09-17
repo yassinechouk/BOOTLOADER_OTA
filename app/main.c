@@ -115,8 +115,8 @@
    from observed hardware state rather than from reaching a line. */
 #define WORK_BLINK                  (1U << 0)
 #define WORK_REPORT                 (1U << 1)
-#define WORK_TRIGGER                (1U << 2)
-#define WORK_ALL                    (WORK_BLINK | WORK_REPORT | WORK_TRIGGER)
+#define WORK_LINK                   (1U << 2)
+#define WORK_ALL                    (WORK_BLINK | WORK_REPORT | WORK_LINK)
 
 
 /* ----------------------------------------------------------------
@@ -542,7 +542,23 @@ int main(void)
             boot_request_set();
             software_reset();
         }
-        work |= WORK_TRIGGER;
+        /* Evidence that the protocol link is still configured.
+         *
+         * This bit used to be set unconditionally, immediately after
+         * the trigger poll -- which made it exactly the tautology this
+         * accumulator was written to replace. A bit that is always set
+         * contributes nothing to WORK_ALL and only makes the check
+         * look more thorough than it is.
+         *
+         * There is no honest evidence that "the trigger poll found
+         * something", because finding nothing is the normal case. What
+         * can be checked is that the peripheral it polls is still
+         * alive: UE clear means USART1 has been disabled or its clock
+         * gated behind the application's back, and the OTA path is
+         * silently dead. That is worth a reset. */
+        if (USART1_CR1 & (1U << 0)) {       /* UE */
+            work |= WORK_LINK;
+        }
 
         /* Confirmation only happens after several complete cycles.
            Confirming on the first line of main() would validate an
