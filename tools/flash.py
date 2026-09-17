@@ -21,7 +21,8 @@ import time
 
 import protocol as p
 from crc32 import crc32_stm32
-from transport import SerialTransport, TransportError, Timeout, Disconnected
+from transport import (SerialTransport, TcpTransport,
+                       TransportError, Timeout, Disconnected)
 
 
 # ---------------------------------------------------------------
@@ -257,7 +258,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__)
 
-    ap.add_argument("--port", default="/dev/ttyACM0")
+    ap.add_argument("--port", default="/dev/ttyACM0",
+                    help="serial device (ignored when --host is given)")
+    ap.add_argument("--host",
+                    help="WiFi gateway address, e.g. 192.168.4.1; "
+                         "uses TCP instead of the serial port")
+    ap.add_argument("--tcp-port", type=int, default=3333,
+                    help="gateway TCP port (default 3333)")
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--dir", help="directory containing app_slotA.bin and app_slotB.bin")
     ap.add_argument("--file", help="explicit binary")
@@ -286,7 +293,10 @@ def main():
         explicit_version = (maj << 16) | (mnr << 8) | pch
 
     print(Term.c("\nFirmware update", Term.BOLD))
-    print(f"  port {args.port} @ {args.baud} baud")
+    if args.host:
+        print(f"  gateway {args.host}:{args.tcp_port} over WiFi")
+    else:
+        print(f"  port {args.port} @ {args.baud} baud")
 
     # A diagnostic message must describe the real state of the board.
     # Without this flag, a disconnection that occurred BEFORE the
@@ -294,7 +304,11 @@ def main():
     transfer_started = False
 
     try:
-        with SerialTransport(args.port, args.baud, verbose=args.verbose) as tr:
+        if args.host:
+            link = TcpTransport(args.host, args.tcp_port, verbose=args.verbose)
+        else:
+            link = SerialTransport(args.port, args.baud, verbose=args.verbose)
+        with link as tr:
 
             step("Board status")
             nfo = read_info(tr)

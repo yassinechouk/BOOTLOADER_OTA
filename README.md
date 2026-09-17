@@ -180,32 +180,39 @@ python3 tools/ota_flash.py --via-wifi 10.0.0.1
 
 | Step | Who | What |
 |---|---|---|
-| 1 | Python → ESP32 `GET /prepare` | ESP32 sends `'U'` for 3 s, waits for STM32 reboot, sends `GET_INFO` |
-| 2 | ESP32 → Python | Returns free slot (`A` or `B`) |
-| 3 | Python | Selects `app_slotA.bin` or `app_slotB.bin` automatically |
-| 4 | Python → ESP32 `POST /upload` | Binary lands in ESP32 RAM |
-| 5 | Python → ESP32 `GET /flash` | ESP32 runs the full protocol transfer locally |
-| 6 | Python polls `GET /log` | Progress streamed to terminal until completion |
+| 1 | Python → gateway | Opens a TCP socket to `192.168.4.1:3333` |
+| 2 | Gateway | Forwards every byte to USART1, and back. It parses nothing |
+| 3 | Python ↔ STM32 | `GET_INFO` answers with the free slot |
+| 4 | Python | Selects `app_slotA.bin` or `app_slotB.bin` automatically |
+| 5 | Python ↔ STM32 | The ordinary framed transfer, end to end over the socket |
+
+The gateway is a transparent pipe, not a peer. The host tool talks to the
+bootloader exactly as it does over a wire, so framing exists once on each end
+and nowhere in between.
 
 No file selection. No button press. No USB cable near the STM32.
 
 **Expected output:**
 ```
-Wi-Fi OTA  (gateway 192.168.4.1)
-  calling /prepare  (OTA reset + GET_INFO)...
-  OK    free slot is B
-  OK    selected app_slotB.bin  (6300 bytes)
+Firmware update
+  gateway 192.168.4.1:3333 over WiFi
 
-Uploading firmware to ESP32 RAM
-  OK    6300 bytes ready
+Board status
+  protocol       : v1
+  bootloader     : v0.2.0
+  active slot    : A
+  free slot      : B
+  file           : app_slotB.bin
 
-Firmware transfer
-  board > triggering OTA reset...
-  board > board: proto v1  active slot A  free slot B  state 3
-  board > transfer accepted, target slot B
-  board > global CRC verified, image marked TESTING
-  board > --- transfer succeeded ---
-  OK    done
+Transfer
+  size     : 6328 bytes
+  CRC32    : 0xAA83AF3C
+  blocks   : 25 x 256
+  [########################################] 100%  6328/6328 bytes
+
+Verification
+  OK    global CRC verified
+  OK    image marked TESTING
 ```
 
 ---
@@ -319,16 +326,20 @@ conditionally, only when its work unit actually advanced.
 
 ### Wi-Fi gateway design
 
-The ESP32 receives the binary over HTTP, buffers it in RAM, then transfers it
-to the STM32 over UART using the exact same binary protocol. The two networks
-are fully decoupled — a dropped Wi-Fi connection during upload costs nothing
-because the STM32 transfer has not started. Once it does, it runs locally at a
-fixed rate with no network in the loop.
+The ESP32 is a transparent TCP-to-UART bridge. Bytes arriving on the socket go
+out of USART1; bytes arriving on USART1 go back to the socket. It holds no
+image buffer, computes no CRC, and knows nothing about frames.
 
-The gateway exposes three endpoints:
-- `GET /prepare` — trigger + GET_INFO → returns free slot
-- `POST /upload` — receive binary into RAM
-- `GET /flash` — run transfer; `GET /log` — stream progress
+An earlier version served a web page, buffered the whole image in 200 KB of
+RAM, and reimplemented the protocol — frame building, CRC32, sequencing, the
+transfer state machine. That made it a third implementation of a protocol that
+already had two, with no test covering it and no way to notice when it drifted.
+It also could not be driven from a command line, which is what the link is for.
+
+As a pipe it cannot drift, because there is nothing to keep in step. TCP
+guarantees delivery and ordering over the Wi-Fi hop, while the protocol's own
+CRC still covers the UART hop end to end — which is the hop where corruption
+actually happens.
 
 ### Interrupt-driven UART + ring buffer
 

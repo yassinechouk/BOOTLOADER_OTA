@@ -23,13 +23,6 @@ Three trigger modes
                          line until the running application confirms it
                          and resets itself.
 
-  --via-wifi [IP]        Uses the ESP32 Wi-Fi gateway (default IP:
-                         192.168.4.1). Fully automated — the gateway
-                         triggers the OTA reset, this script queries
-                         which slot is free, uploads the correct .bin,
-                         starts the flash, and streams the log.
-                         Connect your PC to the "STM32-OTA" Wi-Fi
-                         network before running.
 
 The flag address (for SWD/UART modes) is read from the built ELF
 files so that a constant duplicated here can never silently drift.
@@ -38,22 +31,17 @@ Usage
 -----
     python3 tools/ota_flash.py                     # SWD trigger (default)
     python3 tools/ota_flash.py --via-uart
-    python3 tools/ota_flash.py --via-wifi           # 192.168.4.1
-    python3 tools/ota_flash.py --via-wifi 10.0.0.1
     python3 tools/ota_flash.py --port /dev/ttyUSB0 --verbose
 
 Anything unrecognised is passed through to flash.py (SWD/UART modes).
 """
 
 import argparse
-import http.client
 import mimetypes
 import os
 import subprocess
 import sys
 import time
-import urllib.request
-import urllib.error
 
 # ---------------------------------------------------------------
 # Paths / constants
@@ -329,141 +317,6 @@ def trigger_via_uart(ser, timeout: float = 10.0):
 # Wi-Fi flash (ESP32 gateway)
 # ---------------------------------------------------------------
 
-ESP32_DEFAULT_IP  = "192.168.4.1"
-ESP32_TIMEOUT_S   = 30          # /prepare blocks for ~1 s, /flash streams
-LOG_POLL_INTERVAL = 0.5
-
-
-def _http_get(ip: str, path: str, timeout: int = ESP32_TIMEOUT_S) -> str:
-    """Plain GET, returns body text or raises with the response body included."""
-    url = f"http://{ip}{path}"
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
-            return r.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"HTTP {exc.code} from {path}: {body}") from None
-
-
-
-def _http_post_binary(ip: str, path: str, data: bytes,
-                      filename: str) -> str:
-    """
-    Multipart POST of a binary file — the same form field ('f') that
-    the ESP32's handleUploadData() expects.
-    """
-    boundary = b"----OTABoundary7a4d"
-    body  = b"--" + boundary + b"\r\n"
-    body += (f'Content-Disposition: form-data; name="f"; '
-             f'filename="{filename}"\r\n').encode()
-    body += b"Content-Type: application/octet-stream\r\n\r\n"
-    body += data
-    body += b"\r\n--" + boundary + b"--\r\n"
-
-    conn = http.client.HTTPConnection(ip, timeout=ESP32_TIMEOUT_S)
-    conn.request(
-        "POST", path, body,
-        {"Content-Type": f"multipart/form-data; boundary={boundary.decode()}",
-         "Content-Length": str(len(body))})
-    resp = conn.getresponse()
-    text = resp.read().decode("utf-8", errors="replace")
-    conn.close()
-    if resp.status != 200:
-        raise RuntimeError(f"upload returned HTTP {resp.status}: {text}")
-    return text
-
-
-def wifi_flash(ip: str) -> int:
-    """
-    Full OTA flow over the ESP32 Wi-Fi gateway:
-      1. GET /prepare  -> triggers OTA reset + GET_INFO, returns free slot
-      2. select the matching .bin from the app build directory
-      3. POST /upload  -> binary lands in ESP32 RAM
-      4. GET /flash    -> ESP32 runs the protocol transfer
-      5. poll GET /log -> stream progress to the terminal
-    """
-    step("Wi-Fi OTA  (gateway " + ip + ")")
-
-    # --- 1. prepare (triggers OTA reset + GET_INFO on the STM32) ---
-    info("calling /prepare  (OTA reset + GET_INFO)...")
-    try:
-        slot_char = _http_get(ip, "/prepare", timeout=15).strip()   # 'A' or 'B'
-    except Exception as exc:
-        err(f"/prepare failed: {exc}")
-        info("is the PC connected to the STM32-OTA Wi-Fi network?")
-        info("is the ESP32 powered and the STM32 running its main loop?")
-        return 1
-
-    if slot_char not in ("A", "B"):
-        err(f"unexpected /prepare response: {slot_char!r}")
-        return 1
-    ok(f"free slot is {slot_char}")
-
-    # --- 2. select the binary ---
-    bin_name = f"app_slot{slot_char}.bin"
-    bin_path = os.path.join(APP_DIR, bin_name)
-    if not os.path.exists(bin_path):
-        err(f"{bin_path} not found")
-        info("build the application first:  make -C app")
-        return 1
-
-    with open(bin_path, "rb") as f:
-        firmware = f.read()
-    ok(f"selected {bin_name}  ({len(firmware)} bytes)")
-
-    # --- 3. upload ---
-    step("Uploading firmware to ESP32 RAM")
-    try:
-        resp = _http_post_binary(ip, "/upload", firmware, bin_name)
-    except Exception as exc:
-        err(f"/upload failed: {exc}")
-        return 1
-    ok(resp.strip())
-
-    # --- 4. trigger the flash ---
-    step("Firmware transfer")
-    try:
-        _http_get(ip, "/flash", timeout=5)
-    except Exception as exc:
-        err(f"/flash failed: {exc}")
-        return 1
-
-    # --- 5. stream logs ---
-    seen_lines = 0
-    deadline   = time.time() + 60          # 60 s max; transfer is ~1 s
-    success    = False
-
-    while time.time() < deadline:
-        time.sleep(LOG_POLL_INTERVAL)
-        try:
-            log_text = _http_get(ip, "/log", timeout=5)
-        except Exception:
-            continue
-
-        lines = [l for l in log_text.splitlines() if l.strip()]
-        for line in lines[seen_lines:]:
-            info(f"board > {line}")
-            if "transfer succeeded" in line:
-                success = True
-            if "transfer failed" in line:
-                err("transfer failed (see board log above)")
-                return 1
-        seen_lines = len(lines)
-        if success:
-            break
-
-    if not success:
-        err("timed out waiting for transfer to complete")
-        return 1
-
-    ok("done")
-    return 0
-
-
-# ---------------------------------------------------------------
-# Serial flash
-# ---------------------------------------------------------------
-
 def run_flash(port: str, extra_args: list) -> int:
     step("Firmware transfer")
     cmd = [sys.executable, FLASH_PY,
@@ -486,21 +339,15 @@ def main() -> int:
                     help="trigger over the serial link instead of SWD")
     ap.add_argument('--via-swd', action='store_true',
                     help="trigger with OpenOCD over SWD (default)")
-    ap.add_argument('--via-wifi', nargs='?', const=ESP32_DEFAULT_IP,
-                    metavar='IP',
-                    help="use the ESP32 Wi-Fi gateway "
-                         f"(default IP: {ESP32_DEFAULT_IP})")
 
     args, extra = ap.parse_known_args()
 
     modes = sum([bool(args.via_uart), bool(args.via_swd),
-                 args.via_wifi is not None])
+                 ])
     if modes > 1:
-        ap.error("--via-uart, --via-swd and --via-wifi are mutually exclusive")
+        ap.error("--via-uart and --via-swd are mutually exclusive")
 
     # Wi-Fi path is fully self-contained — no serial port, no ELF checks.
-    if args.via_wifi is not None:
-        return wifi_flash(args.via_wifi)
 
     addr = resolve_boot_request_addr()
     if addr is None:
