@@ -215,6 +215,22 @@ void fault_putc(char c)
     uart_putc(c);
 }
 
+/*
+ * Crude blink delay, deliberately not the SysTick time base.
+ *
+ * shared/systick.h criticises nop loops because their duration depends
+ * on the optimisation level and the clock -- which is correct wherever
+ * a duration is being MEASURED. Nothing is measured here: this only
+ * has to be long enough to see the LED and short enough that the main
+ * loop refreshes the watchdog comfortably inside three seconds. At
+ * 4 MHz it lands near half a second, two orders of magnitude of
+ * margin, and volatile keeps the loop from being optimised away.
+ *
+ * Pulling systick.c into the application to time a blink would add an
+ * interrupt, a driver and a vector for no accuracy that matters. The
+ * trade is deliberate; it is recorded here so the contradiction with
+ * systick.h does not read as an oversight.
+ */
 static void delay(volatile uint32_t n)
 {
     while (n--) {

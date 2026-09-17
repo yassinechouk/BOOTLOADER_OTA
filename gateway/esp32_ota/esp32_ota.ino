@@ -60,6 +60,21 @@
 #define AP_SSID             "STM32-OTA"
 #define AP_PASSWORD         "bootloader"    /* 8 characters minimum */
 
+/*
+ * Security posture, stated rather than assumed.
+ *
+ * The WPA2 passphrase on the access point is the ONLY barrier. The
+ * endpoints carry no authentication: anyone who joins the network can
+ * upload an image and flash it. That is acceptable for a bench tool on
+ * an isolated AP, and it is why the AP is not bridged to any other
+ * network.
+ *
+ * It would NOT be acceptable on a deployed product. Getting there needs
+ * a signed image verified by the bootloader before it is marked
+ * bootable -- a CRC proves integrity, never provenance -- plus
+ * credentials on the endpoints. Neither is implemented.
+ */
+
 #define PIN_UART_RX         18              /* to STM32 PA9  (its TX) */
 #define PIN_UART_TX         17              /* to STM32 PA10 (its RX) */
 #define UART_BAUD           115200
