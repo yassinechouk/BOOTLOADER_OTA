@@ -75,7 +75,7 @@ working at all.
 0x08100000  └──────────────────┘
 ```
 
-![Flash Memory Layout](docs/memory_layout.jpg)
+
 
 Each slot is independent: it has its own size, CRC32, version, and state
 (`EMPTY` / `IN_PROGRESS` / `TESTING` / `VALID`). Rollback is a single field
