@@ -12,3 +12,6 @@ __pycache__/
 *.bak
 *.orig
 *~
+
+# Host test harness build output
+tests/host/libfirmware.so

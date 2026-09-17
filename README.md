@@ -152,7 +152,7 @@ the address.
 ### Mode 2 — UART only (USB cable, no debugger)
 
 ```bash
-python3 tools/ota_flash.py --via-uart
+python3 tools/flash.py --port /dev/ttyACM0 --dir app/
 ```
 
 Holds the trigger byte `'U'` on the serial line. The application requires
@@ -171,9 +171,9 @@ Then, from any machine connected to the `STM32-OTA` Wi-Fi network
 (password: `bootloader`):
 
 ```bash
-python3 tools/ota_flash.py --via-wifi
+python3 tools/flash.py --host 192.168.4.1 --dir app/
 # custom IP:
-python3 tools/ota_flash.py --via-wifi 10.0.0.1
+python3 tools/flash.py --host 10.0.0.1 --dir app/
 ```
 
 **What happens automatically:**
