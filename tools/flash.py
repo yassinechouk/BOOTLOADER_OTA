@@ -120,6 +120,61 @@ def next_version(current: int) -> int:
 # ---------------------------------------------------------------
 # Operations
 # ---------------------------------------------------------------
+# Must match OTA_TRIGGER_BYTE and OTA_CONFIRM_POLLS in app/main.c.
+OTA_TRIGGER_BYTE  = b"U"
+OTA_TRIGGER_SECS  = 4.0
+
+
+def trigger_ota(tr) -> bool:
+    """
+    Ask a running application to hand control back to the bootloader.
+
+    The application polls its protocol UART once per main-loop pass and
+    requires OTA_CONFIRM_POLLS consecutive passes that see the trigger
+    byte AND NOTHING ELSE. A single byte would be unsafe -- one stray
+    character would reboot the board -- so the confirmation is built
+    along the axis a buffer-less receive path actually has: time.
+
+    Holding the line down is therefore the protocol. Bytes lost to
+    overrun are expected and harmless: the application drains what it
+    can each pass, and what matters is that every byte it does see is
+    the trigger.
+
+    Success is detected by protocol rather than by text. The banners
+    the application and the bootloader print go to the DEBUG uart,
+    which does not cross this link -- so the only honest evidence that
+    the request worked is the bootloader answering GET_INFO.
+    """
+    step("OTA request")
+    info(f"holding {OTA_TRIGGER_BYTE!r} down for {OTA_TRIGGER_SECS:.0f} s")
+
+    deadline = time.time() + OTA_TRIGGER_SECS
+    while time.time() < deadline:
+        # A moderate burst rather than a saturating stream: each pass
+        # only has to see the trigger and nothing else, and flooding
+        # buys nothing once that is true.
+        tr._write(OTA_TRIGGER_BYTE * 64)
+        time.sleep(0.05)
+
+    info("waiting for the bootloader to come up...")
+    time.sleep(1.0)
+    tr._flush_input()
+
+    # The request stretches the listen window to 30 s, so there is no
+    # race to win here -- unlike the 2 s window after a plain reset.
+    for attempt in range(5):
+        try:
+            read_info(tr)
+            ok("bootloader is listening")
+            return True
+        except (TransportError, Timeout):
+            time.sleep(0.5)
+
+    err("the application never handed over")
+    info("is it running its main loop? was it already in the bootloader?")
+    return False
+
+
 def read_info(tr) -> p.InfoResponse:
     rep = tr.exchange(p.Frame(p.CMD_GET_INFO, 0))
 
@@ -311,7 +366,16 @@ def main():
         with link as tr:
 
             step("Board status")
-            nfo = read_info(tr)
+            try:
+                nfo = read_info(tr)
+            except (TransportError, Timeout):
+                # Nothing answered. Either the 2 s window has closed and
+                # the application is running, or the board is busy. Ask
+                # the application to hand over, then try once more.
+                if not trigger_ota(tr):
+                    raise
+                step("Board status")
+                nfo = read_info(tr)
             print_info(nfo)
 
             if nfo.proto_version != p.PROTO_VERSION:
