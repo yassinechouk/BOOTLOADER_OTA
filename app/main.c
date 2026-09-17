@@ -143,6 +143,18 @@ static void uart_init(void)
     GPIOA_AFRH  &= ~((0xFU << 4) | (0xFU << 8));
     GPIOA_AFRH  |=  ((7U << 4)   | (7U << 8));
 
+    /* Both peripherals are disabled before BRR is written.
+     *
+     * The bootloader hands over with UE still set -- gating a clock
+     * preserves register contents, and USART1's clock was not gated at
+     * all until recently. RM0351 40.5.4 warns that the baud counters
+     * reload on a BRR write, so the rate must not be changed while the
+     * peripheral is running. Writing BRR first, as this did, risks the
+     * new divisor never taking effect and the application silently
+     * inheriting the bootloader's. */
+    USART2_CR1 = 0;
+    USART1_CR1 = 0;
+
     /* USART2 - Debug logs */
     USART2_BRR = USART_BRR_OVER16(SYSTEM_CLOCK_HZ, UART_BAUD);
     USART2_CR1 = (1U << 3) | (1U << 2) | (1U << 0);   /* TE | RE | UE */
