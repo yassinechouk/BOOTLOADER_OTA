@@ -53,7 +53,6 @@
 
 #define NVIC_ISER1          (*(volatile uint32_t *)0xE000E104UL)
 #define USART1_IRQ_NUMBER   37U
-#define USART2_IRQ_NUMBER   38U
 
 
 
@@ -232,10 +231,16 @@ static void uart_isr(uart_t *u)
 }
 
 
-/* The NVIC passes no argument, so each vector gets a wrapper that
-   supplies the instance. The body above is written once. */
+/* The NVIC passes no argument, so the vector gets a wrapper that
+   supplies the instance. The body above is written once.
+
+   Only USART1 has one. uart_debug is transmit-only: uart_debug_init()
+   never arms its NVIC line and never sets RE, so a USART2 handler
+   could not fire. Defining one anyway would be dead code implying a
+   capability that does not exist. Giving the debug link a receiver
+   later means adding RE, the NVIC arm, a buffer, and the wrapper --
+   all four, or none. */
 void USART1_IRQHandler(void) { uart_isr(&uart_proto); }
-void USART2_IRQHandler(void) { uart_isr(&uart_debug); }
 
 
 /* ----------------------------------------------------------------
