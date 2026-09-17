@@ -14,14 +14,15 @@
  * uart_getc() provides and transmits via uart_write(). Porting to
  * CAN would only touch those two points.
  *
- * The behavior mirrors that of tools/bootloader_sim.py, which
- * serves as the executable specification and whose 64 tests
- * describe the expected edge cases.
+ * This file is the specification. tests/host compiles it for the PC
+ * against models of the flash, CRC and UART drivers, and drives it
+ * through the edge cases; a Python reimplementation used to play that
+ * role and had silently drifted from it.
  *
  * Lazy erase
  * ----------
- * The simulator erases the entire slot at the start of a transfer.
- * On silicon, 480 KB represents 240 pages at roughly twenty
+ * Erasing the entire slot at the start of a transfer would be the
+ * obvious approach. On silicon, 480 KB represents 240 pages at twenty
  * milliseconds each, nearly five seconds of unavailability --
  * for a firmware that may occupy only 20 KB.
  *
