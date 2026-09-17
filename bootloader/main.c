@@ -329,8 +329,8 @@ int main(void)
     iwdg_clear_reset_flags();
 
     systick_init(SYSTEM_CLOCK_HZ);
-    uart_debug_init(115200);
-    uart_proto_init(115200);
+    uart_debug_init(UART_BAUD);
+    uart_proto_init(UART_BAUD);
     crc32_init();
     protocol_init();
 

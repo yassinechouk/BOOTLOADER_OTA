@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include "uart.h"
+#include "board.h"
 
 /* ----------------------------------------------------------------
  * Addresses — RM0351 section 2.2.2
@@ -54,7 +55,6 @@
 #define USART1_IRQ_NUMBER   37U
 #define USART2_IRQ_NUMBER   38U
 
-#define SYSTEM_CLOCK_HZ     4000000UL       /* MSI at reset */
 
 
 /* ----------------------------------------------------------------
@@ -91,10 +91,16 @@ static void uart_configure(uart_t *u, uint32_t baudrate, int with_rx)
     r[R_CR1] = 0;
     r[R_CR3] = 0;
 
-    /* Oversampling by 16, the reset default: BRR = f_ck / baudrate.
-       At 4 MHz and 115200 this gives 34, so 117647 baud in practice —
-       2.1 % off, well inside what a UART tolerates. */
-    r[R_BRR] = baudrate ? (SYSTEM_CLOCK_HZ / baudrate) : 34U;
+    /* Oversampling by 16 (OVER8 = 0), RM0351 section 40.5.4:
+       BRR = USARTDIV = f_CK / baud, ROUNDED rather than truncated.
+
+       Truncating gives 34 at 4 MHz / 115200, i.e. +2.12 % error;
+       rounding gives 35, i.e. -0.79 %. That budget also has to absorb
+       MSI drift over temperature, so spending two thirds of it on an
+       arithmetic choice is an oversight rather than a trade. The
+       derivation lives in shared/board.h so both USARTs and the
+       application agree on it. */
+    r[R_BRR] = USART_BRR_OVER16(SYSTEM_CLOCK_HZ, baudrate);
 
     u->rx_head = 0;
     u->rx_tail = 0;

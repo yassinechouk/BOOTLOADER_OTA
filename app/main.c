@@ -99,8 +99,7 @@
 
 #define LED_PIN             5
 
-/* Must match the rate the bootloader and the host tools use. */
-#define APP_UART_BAUD       115200UL
+
 
 /* Application cycles required before declaring the image healthy. */
 #define CYCLES_BEFORE_CONFIRMATION   3
@@ -145,13 +144,13 @@ static void uart_init(void)
     GPIOA_AFRH  |=  ((7U << 4)   | (7U << 8));
 
     /* USART2 - Debug logs */
-    USART2_BRR = USART_BRR_OVER16(SYSTEM_CLOCK_HZ, APP_UART_BAUD);
+    USART2_BRR = USART_BRR_OVER16(SYSTEM_CLOCK_HZ, UART_BAUD);
     USART2_CR1 = (1U << 3) | (1U << 2) | (1U << 0);   /* TE | RE | UE */
     USART2_ICR = (1U << 0) | (1U << 1) | (1U << 2) | (1U << 3);
     (void)USART2_RDR;
 
     /* USART1 - ESP32 OTA trigger */
-    USART1_BRR = USART_BRR_OVER16(SYSTEM_CLOCK_HZ, APP_UART_BAUD);
+    USART1_BRR = USART_BRR_OVER16(SYSTEM_CLOCK_HZ, UART_BAUD);
     USART1_CR1 = (1U << 3) | (1U << 2) | (1U << 0);   /* TE | RE | UE */
     USART1_ICR = (1U << 0) | (1U << 1) | (1U << 2) | (1U << 3);
     (void)USART1_RDR;

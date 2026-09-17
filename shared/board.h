@@ -55,4 +55,20 @@
  */
 #define USART_BRR_IS_VALID(fck, baud)   (USART_BRR_OVER16(fck, baud) >= 16U)
 
+/*
+ * The rate every serial link on this board runs at: the debug console,
+ * the protocol link to the gateway, and both host tools. Stated once
+ * so that changing it cannot leave one side behind.
+ */
+#define UART_BAUD           115200UL
+
+/*
+ * Checked here rather than trusted. A clock or baud change that lands
+ * below USARTDIV = 16 produces a peripheral that cannot sample
+ * correctly -- a fault that shows up as corrupted bytes on the wire,
+ * which is an expensive place to discover an arithmetic problem.
+ */
+_Static_assert(USART_BRR_IS_VALID(SYSTEM_CLOCK_HZ, UART_BAUD),
+               "USARTDIV < 16: RM0351 40.5.4 forbids this clock/baud pair");
+
 #endif /* BOARD_H */
