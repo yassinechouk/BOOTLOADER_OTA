@@ -100,6 +100,7 @@
 #define RCC_AHB1ENR         (*(volatile uint32_t *)(RCC_BASE + 0x48))
 #define RCC_AHB2ENR         (*(volatile uint32_t *)(RCC_BASE + 0x4C))
 #define RCC_APB1ENR1        (*(volatile uint32_t *)(RCC_BASE + 0x58))
+#define RCC_APB2ENR         (*(volatile uint32_t *)(RCC_BASE + 0x60))
 
 #define NVIC_ICER0          (*(volatile uint32_t *)0xE000E180UL)
 #define NVIC_ICER1          (*(volatile uint32_t *)0xE000E184UL)
@@ -197,8 +198,9 @@ static void jump_to_application(uint32_t base)
     NVIC_ICPR0 = 0xFFFFFFFFUL;      /* clear pending ones */
     NVIC_ICPR1 = 0xFFFFFFFFUL;
 
-    RCC_APB1ENR1 &= ~(1U << 17);    /* USART2 */
-    RCC_AHB1ENR  &= ~(1U << 12);    /* CRC    */
+    RCC_APB1ENR1 &= ~(1U << 17);    /* USART2 -- debug console  */
+    RCC_APB2ENR  &= ~(1U << 14);    /* USART1 -- protocol link   */
+    RCC_AHB1ENR  &= ~(1U << 12);    /* CRC                       */
 
     /* Relocate the vector table. Without this the application starts,
        then crashes on its first interrupt: the processor would look
