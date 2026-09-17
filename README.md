@@ -279,14 +279,19 @@ and only for the wired paths.
 | `flash.py --port /dev/ttyUSB0 --dir app/` | Same over a USB-TTL adapter on PA9/PA10 |
 | `write_metadata.py --slot A --image app/app_slotA.bin` | Write the metadata record for an SWD-flashed image |
 | `write_metadata.py --slot A --image … --dry-run` | Build and print the record, touch nothing |
-| `ota_flash.py --via-swd` | Trigger the OTA reset with OpenOCD, then hand over to `flash.py` |
+| `ota_flash.py --host 192.168.4.1` | Trigger the reset over SWD, then transfer over Wi-Fi |
 | `crc32.py` | Print the CRC32 of the reference vectors |
 | `picocom -b 115200 /dev/ttyACM0` | Read the debug console |
 
-`ota_flash.py --via-swd` exists for the case `flash.py` cannot handle: an
-application that has crashed and can no longer honour the trigger. It reads the
-`_boot_request` symbol from all three ELF files and refuses to run if they
-disagree on the address.
+`ota_flash.py` exists for the one case `flash.py` cannot cover: an application
+that has crashed, hung, or is absent, and can no longer honour a trigger sent to
+it. OpenOCD writes the flag straight into RAM, so no cooperation from the
+firmware is needed.
+
+Setting the flag and transferring the image are separate concerns there. The
+flag goes in over SWD; `--host` (or `--port`) says where the transfer should go
+and is passed through to `flash.py`. It reads `_boot_request` from all three ELF
+files and refuses to run if they disagree on the address.
 
 ---
 

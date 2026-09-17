@@ -1,43 +1,47 @@
 #!/usr/bin/env python3
 """
-ota_flash.py -- one-command OTA update, without the reset button.
+ota_flash.py -- trigger an OTA reset over SWD, then hand off to flash.py.
 
-What it does
-------------
-The bootloader listens on the serial link for two seconds after every
-reset. That window is deliberately short, and hitting it means
-resetting the board and racing it. The boot request flag removes the
-race: a magic word written to the last word of RAM survives a system
-reset, and a bootloader that finds it stretches the same listen window
-to thirty seconds instead.
+What it is for
+--------------
+The bootloader listens for two seconds after every reset. Hitting that
+window means pressing reset and racing it. The boot request flag removes
+the race: a magic word written to the last word of RAM survives a system
+reset, and a bootloader that finds it stretches the window to thirty
+seconds.
 
-This script sets that flag, resets the board, waits for the bootloader
-to confirm, and hands over to flash.py.
+flash.py already sets that flag by itself, by holding the trigger byte
+on the protocol link until the application hands over. This script
+exists for the one case flash.py cannot cover: an application that has
+crashed, hung, or is absent, and can no longer honour anything sent to
+it. OpenOCD writes the word directly into RAM and resets the board, so
+no cooperation from the firmware is required.
 
-Three trigger modes
--------------------
-  --via-swd   (default)  OpenOCD writes the word straight into RAM and
-                         resets. Needs an ST-Link.
+Transport
+---------
+Setting the flag and transferring the image are separate concerns. The
+flag goes in over SWD; the transfer goes wherever flash.py is told to
+send it. The protocol runs on USART1, which the ST-Link virtual COM port
+does not reach, so the usual combination is SWD to trigger and WiFi to
+transfer:
 
-  --via-uart             Holds the trigger character down on the serial
-                         line until the running application confirms it
-                         and resets itself.
+    python3 tools/ota_flash.py --host 192.168.4.1
 
+--port names the DEBUG console (USART2, /dev/ttyACM0 by default). It is
+only read from, to catch the banner that proves the flag was honoured.
 
-The flag address (for SWD/UART modes) is read from the built ELF
-files so that a constant duplicated here can never silently drift.
+The flag address is read from the built ELF files rather than hard-coded,
+and the script refuses to run if the three images disagree about it.
 
 Usage
 -----
-    python3 tools/ota_flash.py                     # SWD trigger (default)
-    python3 tools/ota_flash.py --via-uart
-    python3 tools/ota_flash.py --port /dev/ttyUSB0 --verbose
+    python3 tools/ota_flash.py --host 192.168.4.1
+    python3 tools/ota_flash.py --host 192.168.4.1 --verbose
 
-Anything unrecognised is passed through to flash.py (SWD/UART modes).
+Anything unrecognised is passed through to flash.py.
 """
 
 import argparse
-import mimetypes
 import os
 import subprocess
 import sys
@@ -65,7 +69,6 @@ NM = 'arm-none-eabi-nm'
 BOOT_REQUEST_MAGIC = 0xDEADBEEF
 
 # Must match app/main.c.
-OTA_TRIGGER_BYTE = b'U'
 
 OPENOCD_IFACE  = 'interface/stlink.cfg'
 OPENOCD_TARGET = 'target/stm32l4x.cfg'
@@ -75,8 +78,6 @@ OPENOCD_TARGET = 'target/stm32l4x.cfg'
 # was understood.
 BL_BANNER  = "OTA request accepted"
 
-# The application prints this when the trigger streak completes.
-APP_BANNER = "OTA request confirmed"
 
 # ---------------------------------------------------------------
 
@@ -266,58 +267,18 @@ def trigger_via_swd(addr: int, ser) -> bool:
 # Trigger: UART
 # ---------------------------------------------------------------
 
-def trigger_via_uart(ser, timeout: float = 10.0):
-    """
-    Hold the trigger character down until the application confirms.
-
-    The application requires several consecutive polls to see the
-    trigger character and nothing else before it acts -- see the OTA
-    trigger section in app/main.c. It polls roughly once per blink, so
-    confirmation takes a couple of seconds of sustained sending. That
-    is the cost of not having a single byte able to reboot the board.
-
-    Sending stops the moment the application confirms, so that none of
-    these bytes are still in flight when flash.py starts talking to the
-    bootloader.
-
-    Returns whatever was read past the application's confirmation (the
-    caller needs it -- see watch_for), or None if the request was never
-    confirmed.
-    """
-    step("Trigger (UART)")
-    info(f"holding {OTA_TRIGGER_BYTE!r} down until the application confirms")
-
-    ser.reset_input_buffer()
-
-    buf = ""
-    deadline = time.time() + timeout
-
-    while time.time() < deadline:
-        ser.write(OTA_TRIGGER_BYTE * 8)
-        ser.flush()
-
-        chunk = ser.read(256)
-        if chunk:
-            buf += chunk.decode("ascii", errors="replace")
-            if APP_BANNER in buf:
-                ok("application confirmed the request")
-                # Hand the tail on: this read may already contain the
-                # bootloader's banner, printed milliseconds later.
-                return buf.split(APP_BANNER, 1)[1]
-
-        time.sleep(0.02)
-
-    err("the application never confirmed the request")
-    info("is it running its main loop? is the serial port the right one?")
-    info("if the application is crashed or absent, use --via-swd instead")
-    return None
-
-
-# ---------------------------------------------------------------
-# Wi-Fi flash (ESP32 gateway)
-# ---------------------------------------------------------------
-
 def run_flash(port: str, extra_args: list) -> int:
+    """
+    Hand the transfer to flash.py.
+
+    --port is passed for the wired case, but flash.py ignores it when
+    --host is present, so the transport is whatever the caller asked
+    for. That matters here: the protocol runs on USART1, which the
+    ST-Link port does not reach. Triggering over SWD and transferring
+    over WiFi is the normal combination:
+
+        ota_flash.py --via-swd --host 192.168.4.1
+    """
     step("Firmware transfer")
     cmd = [sys.executable, FLASH_PY,
            '--port', port,
@@ -335,17 +296,11 @@ def main() -> int:
         epilog="unrecognised arguments are passed through to flash.py")
     ap.add_argument('--port', default='/dev/ttyACM0')
     ap.add_argument('--baud', type=int, default=115200)
-    ap.add_argument('--via-uart', action='store_true',
-                    help="trigger over the serial link instead of SWD")
     ap.add_argument('--via-swd', action='store_true',
-                    help="trigger with OpenOCD over SWD (default)")
+                    help="trigger with OpenOCD over SWD (the only mode)")
 
     args, extra = ap.parse_known_args()
 
-    modes = sum([bool(args.via_uart), bool(args.via_swd),
-                 ])
-    if modes > 1:
-        ap.error("--via-uart and --via-swd are mutually exclusive")
 
     # Wi-Fi path is fully self-contained — no serial port, no ELF checks.
 
@@ -359,18 +314,11 @@ def main() -> int:
         return 1
     ok(f"{args.port} @ {args.baud} baud")
 
-    prime = ""
-
     try:
-        if args.via_uart:
-            prime = trigger_via_uart(ser)
-            if prime is None:
-                return 1
-        else:
-            if not trigger_via_swd(addr, ser):
-                err("could not set the boot request flag")
-                info("is the ST-Link connected and the board powered?")
-                return 1
+        if not trigger_via_swd(addr, ser):
+            err("could not set the boot request flag")
+            info("is the ST-Link connected and the board powered?")
+            return 1
 
         # The one check that proves the whole mechanism worked. Every
         # earlier version of this script shrugged and carried on here,
@@ -378,12 +326,15 @@ def main() -> int:
         # indistinguishable from a slow one -- flash.py just timed out
         # a few seconds later with nothing to say about why.
         step("Waiting for the bootloader")
-        if not watch_for(ser, BL_BANNER, timeout=5.0, prime=prime):
-            err("the bootloader did not accept the request")
-            info("it reset, but never reported the flag. The usual cause is")
-            info("a bootloader older than v0.2.0: its stack reaches the top")
-            info("of RAM, so its own first push overwrites the flag before")
-            info("it is read. Reflash it over SWD:  make -C bootloader flash")
+        if not watch_for(ser, BL_BANNER, timeout=5.0):
+            err("the bootloader did not report accepting the request")
+            info("the flag was written and the board reset, but the banner")
+            info("never arrived on the debug console. Two common causes:")
+            info("  - OpenOCD disturbed the ST-Link's virtual COM port;")
+            info("    unplug and replug the USB cable, then retry")
+            info("  - the bootloader predates the boot request flag;")
+            info("    reflash it:  make -C bootloader flash")
+            info("the transfer may still work -- try flash.py directly")
             return 1
         ok("bootloader is listening")
 
