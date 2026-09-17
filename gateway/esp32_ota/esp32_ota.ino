@@ -236,24 +236,35 @@ static void sendFrame(uint8_t cmd, uint16_t seq,
  */
 static bool readFrame(Frame &f, uint32_t timeoutMs)
 {
-  uint32_t deadline = millis() + timeoutMs;
+  /* Elapsed-time form, not a precomputed deadline.
+   *
+   * 'millis() + timeoutMs' overflows after roughly 49.7 days of
+   * uptime, and every comparison against it then fails immediately:
+   * frame reads would time out instantly, forever, on a gateway that
+   * had simply been left powered on. shared/systick.h documents this
+   * exact trap and labels the additive form DO NOT WRITE THIS.
+   *
+   * Unsigned subtraction is modular, so (millis() - start) gives the
+   * true elapsed time across a rollover. */
+  const uint32_t start = millis();
+  #define TIMED_OUT()  ((millis() - start) >= timeoutMs)
   uint8_t  window[2] = {0, 0};
 
   /* Hunt for the preamble. Stray bytes before a frame are ignored
      rather than treated as an error — a reset message, a leftover
      character, anything. */
-  while (millis() < deadline) {
+  while (!TIMED_OUT()) {
     if (!Serial1.available()) { delay(1); continue; }
     window[0] = window[1];
     window[1] = (uint8_t)Serial1.read();
     if (window[0] == FRAME_MAGIC_0 && window[1] == FRAME_MAGIC_1) break;
   }
-  if (millis() >= deadline) return false;
+  if (TIMED_OUT()) return false;
 
   uint8_t head[5];
   for (int i = 0; i < 5; i++) {
     while (!Serial1.available()) {
-      if (millis() >= deadline) return false;
+      if (TIMED_OUT()) return false;
       delay(1);
     }
     head[i] = (uint8_t)Serial1.read();
@@ -270,7 +281,7 @@ static bool readFrame(Frame &f, uint32_t timeoutMs)
 
   for (uint16_t i = 0; i < f.len; i++) {
     while (!Serial1.available()) {
-      if (millis() >= deadline) return false;
+      if (TIMED_OUT()) return false;
       delay(1);
     }
     f.data[i] = (uint8_t)Serial1.read();
@@ -279,7 +290,7 @@ static bool readFrame(Frame &f, uint32_t timeoutMs)
   uint8_t trailer[4];
   for (int i = 0; i < 4; i++) {
     while (!Serial1.available()) {
-      if (millis() >= deadline) return false;
+      if (TIMED_OUT()) return false;
       delay(1);
     }
     trailer[i] = (uint8_t)Serial1.read();
@@ -296,6 +307,7 @@ static bool readFrame(Frame &f, uint32_t timeoutMs)
 
   return crc32_stm32(body, 5 + f.len) == received;
 }
+#undef TIMED_OUT
 
 /*
  * Sends a frame and waits for the reply, retransmitting on failure.
@@ -327,6 +339,10 @@ static bool exchange(uint8_t cmd, uint16_t seq,
 
 uint8_t *firmware      = nullptr;
 size_t   firmwareLen   = 0;
+
+/* Set when an upload exceeds the buffer; sticky until the next
+   UPLOAD_FILE_START. */
+static bool uploadOversize = false;
 bool     transferBusy  = false;
 uint8_t  targetSlot    = 0xFF;
 
@@ -491,6 +507,12 @@ void handleLog()  { server.send(200, "text/plain", logAsText()); }
 
 void handleUploadDone()
 {
+  if (uploadOversize) {
+    server.send(413, "text/plain",
+                "image too large: maximum " +
+                String(MAX_FIRMWARE_SIZE - 8) + " bytes");
+    return;
+  }
   server.send(200, "text/plain",
               String(firmwareLen) + " bytes ready");
 }
@@ -501,18 +523,37 @@ void handleUploadData()
 
   if (up.status == UPLOAD_FILE_START) {
     firmwareLen = 0;
+    uploadOversize = false;
     logAdd("upload started: " + up.filename);
   }
   else if (up.status == UPLOAD_FILE_WRITE) {
-    /* Bounded. A file larger than the buffer must be refused rather
-       than allowed to run past the end of it. */
-    if (firmwareLen + up.currentSize <= MAX_FIRMWARE_SIZE - 8) {
+    /* Bounded, and REFUSED rather than truncated.
+     *
+     * Skipping the copy and carrying on, as this did, produces an
+     * image that is silently short. Nothing downstream notices: the
+     * CRC is computed over what was kept, so it is internally
+     * consistent and the STM32 accepts it. A half-firmware then gets
+     * installed and only the rollback catches it, three boots later,
+     * with nothing reporting the real cause.
+     *
+     * The flag is sticky for the rest of the upload; handleUploadDone
+     * turns it into an HTTP error. */
+    if (uploadOversize ||
+        firmwareLen + up.currentSize > MAX_FIRMWARE_SIZE - 8) {
+      uploadOversize = true;
+    } else {
       memcpy(firmware + firmwareLen, up.buf, up.currentSize);
       firmwareLen += up.currentSize;
     }
   }
   else if (up.status == UPLOAD_FILE_END) {
-    logAdd("upload complete: " + String(firmwareLen) + " bytes");
+    if (uploadOversize) {
+      firmwareLen = 0;          /* refuse it outright */
+      logAdd("upload REFUSED: larger than " +
+             String(MAX_FIRMWARE_SIZE - 8) + " bytes");
+    } else {
+      logAdd("upload complete: " + String(firmwareLen) + " bytes");
+    }
   }
 }
 
