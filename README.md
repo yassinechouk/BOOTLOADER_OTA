@@ -114,7 +114,11 @@ come from the linker scripts, never from a constant in C.
 
 ## Quick start
 
-### 1 — Dependencies
+### 1 — Clone and install dependencies
+
+```bash
+git clone https://github.com/yassinechouk/BOOTLOADER_OTA.git && cd BOOTLOADER_OTA
+```
 
 ```bash
 sudo apt install gcc-arm-none-eabi openocd picocom
@@ -127,7 +131,7 @@ pip install pyserial --break-system-packages
 ### 2 — Build everything
 
 ```bash
-cd /path/to/bootloader && make -C bootloader && make -C app && make -C app verify
+make -C bootloader && make -C app && make -C app verify
 ```
 
 `make verify` confirms each binary is linked to its own slot address. The
